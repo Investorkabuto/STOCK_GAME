@@ -16,10 +16,12 @@ import json
 import math
 import os
 import sys
+import urllib.error
 import urllib.request
 
 import yfinance as yf
 
+USER_AGENT = "stock-game-ingest/1.0 (+https://github.com/Investorkabuto/STOCK_GAME)"
 JST = dt.timezone(dt.timedelta(hours=9))
 # 終値は大引け（15:30）後しばらくしないと確定しないため、それより前は当日の終値を取りに行かない
 CLOSE_READY = dt.time(15, 45)
@@ -30,10 +32,19 @@ def api(method: str, path: str, body: dict | None = None) -> dict:
         os.environ["API_BASE_URL"].rstrip("/") + path,
         method=method,
         data=None if body is None else json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {os.environ['INGEST_TOKEN']}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {os.environ['INGEST_TOKEN']}",
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        },
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        # 原因が分かるよう、応答本文の先頭をログに出す
+        detail = e.read(500).decode("utf-8", "replace")
+        raise SystemExit(f"API error {e.code} on {method} {path}: {detail}") from e
 
 
 def daily_bars(tickers: list[str], trade_date: str) -> dict[str, dict]:
