@@ -9,7 +9,7 @@ crons = ["*/5 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "stock_game"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "c457ef14-0779-4cc5-8b7a-13cba9de1261"
 migrations_dir = "migrations"
 
 # AI向け文書（Markdown / txt）を文字列として取り込む
