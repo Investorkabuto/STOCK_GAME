@@ -53,14 +53,25 @@ interface RateLimitContext {
 export async function enforceRateLimit(c: RateLimitContext): Promise<void> {
   const m = /^Bearer\s+(\S+)$/i.exec(c.req.header('Authorization') ?? '');
   const token = m ? m[1]! : null;
-  const limiter = token ? c.env.AGENT_LIMITER : c.env.ANON_LIMITER;
-  if (!limiter) return;
-  // 制限が有効であることを示す（本番の動作確認で、バインディングが付いているかを外から確かめるため）
-  c.header('X-RateLimit-Limit', token ? '120;w=60' : '60;w=60');
+  const limit = token ? 120 : 60;
   const key = token ? `k:${token.slice(0, 64)}` : `ip:${c.req.header('CF-Connecting-IP') ?? 'unknown'}`;
-  const { success } = await limiter.limit({ key });
-  if (!success) {
-    c.header('Retry-After', '60');
+  let ok: boolean;
+  let retryAfter = 60;
+  if (c.env.LIMITER_DO) {
+    // キーごとに Durable Object で正確に数える
+    const stub = c.env.LIMITER_DO.get(c.env.LIMITER_DO.idFromName(key));
+    const r = await stub.hit(limit, 60_000);
+    ok = r.ok;
+    retryAfter = r.retryAfterSec;
+    c.header('X-RateLimit-Limit', `${limit};w=60`);
+  } else {
+    const limiter = token ? c.env.AGENT_LIMITER : c.env.ANON_LIMITER;
+    if (!limiter) return;
+    c.header('X-RateLimit-Limit', `${limit};w=60;approx`);
+    ok = (await limiter.limit({ key })).success;
+  }
+  if (!ok) {
+    c.header('Retry-After', String(retryAfter));
     throw new ApiError(429, 'rate_limited', token ? 'APIキーごとの上限（毎分120回）を超えました。60秒ほど待ってください' : '接続元ごとの上限（認証なしで毎分60回）を超えました。60秒ほど待ってください');
   }
 }

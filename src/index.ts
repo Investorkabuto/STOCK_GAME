@@ -94,3 +94,4 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export { app };
+export { RateLimiter } from './lib/limiter-do';

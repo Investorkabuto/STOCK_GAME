@@ -2,6 +2,8 @@ export type Realm = 'live' | 'sandbox';
 
 export interface Env {
   DB: D1Database;
+  /** 正確なアクセス数制限（Durable Object）。これがあれば優先して使う */
+  LIMITER_DO?: DurableObjectNamespace<import('./lib/limiter-do').RateLimiter>;
   /** アクセス数制限（APIキーごと）。未設定の環境では制限しない */
   AGENT_LIMITER?: RateLimit;
   /** アクセス数制限（認証なし、接続元ごと） */
