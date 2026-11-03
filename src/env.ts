@@ -25,7 +25,7 @@ export interface Env {
 }
 
 export const INITIAL_CASH = 10_000_000;
-export const RULES_VERSION = '2026-11-04.5';
+export const RULES_VERSION = '2026-11-04.6';
 /**
  * テスト運用の大会。審査なしで即参加でき、月の途中からも参加できる。成績は翌月に引き継がない（殿堂にも載せない）。
  * 登録の受け付けは entryOpensAt から。
@@ -46,6 +46,8 @@ export const TACTIC_GUIDE: Record<Tactic, string> = {
   iroiro: '柔軟に動く。市況、テーマ、セクターの循環、決算などのイベント、市場の変化から最適解を導く。複数の考え方を組み合わせてよい',
 };
 export const TACTIC_BY = ['owner', 'ai'] as const;
+/** 運営AI自身の参加エージェント。この agent_id への裁定は、警告でも管理者の承認を必要とする（ルール 10.1） */
+export const OPERATOR_AGENT_IDS: readonly string[] = ['agt_0mw15zpntex7ae2cc0h'];
 /** 登録時のエントリー銘柄（初回の買い）の数の上限 */
 export const ENTRY_MAX_ORDERS = 10;
 

@@ -1,6 +1,6 @@
 // 運営タスクのキュー、審査・裁定・異議・記事の反映。
 // 運営AI（もち）と管理者（ユーザー）の両方の操作がここを通るので、監査ログもここで残す。
-import { INITIAL_CASH, isTestSeason } from '../env';
+import { INITIAL_CASH, isTestSeason, OPERATOR_AGENT_IDS } from '../env';
 import { eventStatement, type SeasonRow } from '../db/repo';
 import { newId } from '../lib/crypto';
 import { ApiError } from '../lib/http';
@@ -172,7 +172,8 @@ export async function proposeAdjudicationStatements(
   const id = newId('adj', nowMs);
   const season = await currentSeasonOf(db, p.agent_id);
   const now = jstIso(nowMs);
-  const published = p.level === 'warning';
+  // 運営AI自身への裁定は、警告でも管理者の承認待ちにする（自分で自分を裁かない）
+  const published = p.level === 'warning' && !OPERATOR_AGENT_IDS.includes(p.agent_id);
   const stmts = [
     db
       .prepare(
@@ -212,7 +213,14 @@ export async function adminDecideAdjudication(
   const adj = await loadAdjudication(db, id);
   if (adj.status !== 'pending_review') throw new ApiError(409, 'conflict', `adjudication is ${adj.status}`);
   const stmts: D1PreparedStatement[] = [auditStatement(db, 'admin', `adjudication.${decision}`, id, opts, nowMs)];
-  if (decision === 'approve') {
+  if (decision === 'approve' && adj.level === 'warning') {
+    // 承認待ちの警告（運営AI自身への警告）は、承認で公開する
+    const now = jstIso(nowMs);
+    stmts.push(
+      db.prepare("UPDATE adjudications SET status = 'published', decided_by = 'admin', decided_at = ?, published_at = ? WHERE id = ?").bind(now, now, id),
+      ...(await publishStatements(db, { id, agent_id: adj.agent_id, level: 'warning', reason: adj.reason }, '警告', nowMs)),
+    );
+  } else if (decision === 'approve') {
     stmts.push(...(await enforceStatements(db, adj, !!opts.banFutureSeasons, nowMs)));
   } else {
     stmts.push(db.prepare("UPDATE adjudications SET status = 'rejected', decided_by = 'admin', decided_at = ? WHERE id = ?").bind(jstIso(nowMs), id));
@@ -229,7 +237,7 @@ export async function adminDecideAdjudication(
     }
   }
   await db.batch(stmts);
-  return { id, status: decision === 'approve' ? 'enforced' : 'rejected' };
+  return { id, status: decision === 'approve' ? (adj.level === 'warning' ? 'published' : 'enforced') : 'rejected' };
 }
 
 // ---------------------------------------------------------------- 異議申し立て
