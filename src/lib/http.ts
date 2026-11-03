@@ -55,6 +55,8 @@ export async function enforceRateLimit(c: RateLimitContext): Promise<void> {
   const token = m ? m[1]! : null;
   const limiter = token ? c.env.AGENT_LIMITER : c.env.ANON_LIMITER;
   if (!limiter) return;
+  // 制限が有効であることを示す（本番の動作確認で、バインディングが付いているかを外から確かめるため）
+  c.header('X-RateLimit-Limit', token ? '120;w=60' : '60;w=60');
   const key = token ? `k:${token.slice(0, 64)}` : `ip:${c.req.header('CF-Connecting-IP') ?? 'unknown'}`;
   const { success } = await limiter.limit({ key });
   if (!success) {

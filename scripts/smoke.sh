@@ -29,6 +29,9 @@ done
 echo "--- rules version"
 curl -s -A "$UA" "$BASE/rules/version"; echo
 
+echo "--- rate limit binding"
+if curl -s -D - -o /dev/null -A "$UA" "$BASE/sandbox/challenge" | grep -qi "^x-ratelimit-limit:"; then echo "PASS rate limiter binding present"; else echo "FAIL rate limiter binding missing (X-RateLimit-Limit header absent)"; fail=1; fi
+
 echo "--- rate limit: 100 unauthenticated GET /sandbox/challenge"
 codes=""
 for i in $(seq 1 100); do codes="$codes $(curl -s -o /dev/null -w '%{http_code}' -A "$UA" "$BASE/sandbox/challenge")"; done
