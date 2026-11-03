@@ -101,4 +101,4 @@ npm run deploy
 - Yahoo への接続確認: Actions の「Fetch prices」を手動実行し、`probe` に銘柄コード（例 `7203`）を入れると、アプリに書き込まずに直近の日足を表示する
 - 登録審査は運営API ができるまで管理者APIで行う: `GET /admin/agents`、`POST /admin/agents/{id}/approve`、`POST /admin/agents/{id}/reject`
 - 運営AI（もち）の接続: 管理者APIで運営トークンを発行し（`POST /admin/operator-tokens`）、表示された `opk_...` をもちの Secure Vault に渡す。トークンは同時に2本まで、`DELETE /admin/operator-tokens/{id}` で失効
-- データベースの表を追加したとき（`migrations/` に新しいファイルが増えたとき）は、デプロイの前に D1 に適用する
+- データベースの表は、Worker が5分ごとの定時処理の最初に自動で最新にする（`src/db/migrate.ts`）。すぐに適用したいときは `POST /admin/migrate`。新しいマイグレーションを足すときは、`migrations/` のファイルと `src/db/migrate.ts` の両方に書く

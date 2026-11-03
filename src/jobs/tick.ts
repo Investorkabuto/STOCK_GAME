@@ -7,11 +7,14 @@ import { INITIAL_CASH, type Env } from '../env';
 import { eventStatement, holidaySet, type SeasonRow } from '../db/repo';
 import { addDays, deadlineMs, isBusinessDay, jstDate, jstIso, monthRange, registrationDeadlineMs, type Timing } from '../lib/time';
 import { settleLiveSession } from './settlement';
+import { ensureSchema } from '../db/migrate';
 import { checkAlerts, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
 
 export async function tick(env: Env, nowMs: number): Promise<string[]> {
   const db = env.DB;
   const log: string[] = [];
+  const migrated = await ensureSchema(db);
+  if (migrated.length) log.push(`schema migrated: ${migrated.join(', ')}`);
   await manageSeasons(db, nowMs, log);
   await lockSessions(db, nowMs, log);
   await settleReady(db, nowMs, log);

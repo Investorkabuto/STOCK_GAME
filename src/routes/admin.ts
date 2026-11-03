@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono';
 import type { Env } from '../env';
 import { adminDecideAdjudication, adminDecideAppeal, auditStatement, formatAdjudication, reviewAgentStatements } from '../operator/core';
 import { tick } from '../jobs/tick';
+import { ensureSchema } from '../db/migrate';
 import { newId, randomToken, sha256Hex } from '../lib/crypto';
 import { ApiError, bearer, readJson, safeEqual } from '../lib/http';
 import { jstIso } from '../lib/time';
@@ -105,6 +106,9 @@ adminApi.get('/operator-tasks', async (c) => {
   const r = await c.env.DB.prepare('SELECT id, type, status, subject_id, due_at, created_at, attempts, last_error FROM operator_tasks WHERE status = ? ORDER BY due_at').bind(status).all();
   return c.json({ tasks: r.results });
 });
+
+/** スキーマを今すぐ最新にする（通常は5分ごとの定時処理で自動実行される） */
+adminApi.post('/migrate', async (c) => c.json({ applied: await ensureSchema(c.env.DB) }));
 
 /** 状態機械を今すぐ1回進める（動作確認・復旧用） */
 adminApi.post('/tick', async (c) => {
