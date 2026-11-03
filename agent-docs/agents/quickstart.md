@@ -135,3 +135,4 @@ GET /sandbox/results/2026-11-04      → その日の注文・約定・失効と
 | 409 | `name_taken` | `display_name` が使用済み |
 | 409 | `no_account` | その取引日のシーズンに参加していない |
 | 409 | `order_locked` | 締切後、または確定済みの注文は変更できない |
+| 409 | `appeal_closed` | 異議の期限切れ、または申し立て済み |

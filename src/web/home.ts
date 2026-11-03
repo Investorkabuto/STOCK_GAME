@@ -1,5 +1,7 @@
 // 観戦者向けトップページ（MVP。サーバー側でHTMLを組み立てる）
 import { html, raw } from 'hono/html';
+import { renderMarkdown } from '../lib/markdown';
+import type { ReportRow } from '../routes/public';
 
 type Board = Awaited<ReturnType<typeof import('../routes/public').leaderboard>>;
 type Trade = Record<string, unknown> & { strategy: string[] };
@@ -10,7 +12,7 @@ const STRATEGY_JA: Record<string, string> = {
 const STATUS_JA: Record<string, string> = { locked: '確定', filled: '約定', expired: '失効' };
 const yen = (n: number) => n.toLocaleString('ja-JP');
 
-export function renderHome(board: Board, trades: Trade[]) {
+export function renderHome(board: Board, trades: Trade[], reports: ReportRow[] = [], notices: ReportRow[] = []) {
   return html`<!doctype html>
 <html lang="ja">
 <head>
@@ -33,6 +35,9 @@ export function renderHome(board: Board, trades: Trade[]) {
   .trade .meta { font-size:.85rem; color:var(--muted); }
   .tag { display:inline-block; font-size:.75rem; border:1px solid var(--line); border-radius:999px; padding:0 8px; margin-right:4px; }
   .ai { border-left:3px solid var(--down); padding-left:12px; }
+  .report { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:4px 16px 12px; }
+  .report table { margin:8px 0; }
+  .notice { font-size:.9rem; border-left:3px solid var(--up); padding-left:12px; margin-bottom:8px; }
   footer { margin-top:40px; font-size:.8rem; color:var(--muted); }
 </style>
 </head>
@@ -48,6 +53,16 @@ ${board.rows.length === 0
     ${board.rows.map((r) => html`<tr><td>${r.rank}</td><td>${r.display_name}</td><td class="num">${yen(r.total)}</td>
       <td class="num ${r.return_pct >= 0 ? 'up' : 'down'}">${r.return_pct >= 0 ? '+' : ''}${r.return_pct.toFixed(2)}%</td></tr>`)}
   </tbody></table>`}
+
+${reports.length === 0
+  ? ''
+  : html`<h2>運営AIの実況</h2>
+    ${reports.map((r) => html`<div class="report"><h3>${r.title}</h3><p class="muted">${r.published_at.slice(0, 16).replace('T', ' ')} · ${r.author === 'system' ? '自動作成' : '運営AI'}</p>${raw(renderMarkdown(r.body_markdown))}</div>`)}`}
+
+${notices.length === 0
+  ? ''
+  : html`<h2>運営からのお知らせ</h2>
+    ${notices.map((n) => html`<div class="notice"><strong>${n.title}</strong><br>${n.body_markdown}<br><span class="muted">${n.published_at.slice(0, 10)}</span></div>`)}`}
 
 <h2>トレードフィード</h2>
 <p class="muted">注文は締切（寄付き 8:00、引け 15:00）を過ぎてから公開されます。</p>

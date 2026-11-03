@@ -10,6 +10,10 @@ export interface Env {
   CHALLENGE_TTL_MS?: string;
   /** '1' のときだけ POST /admin/tick?now= で時刻を指定できる（ローカル検証用。本番では設定しない） */
   ALLOW_TIME_TRAVEL?: string;
+  /** 滞留通知用。Issues の書き込み権限を持つ GitHub トークン（未設定なら通知はログのみ） */
+  GITHUB_TOKEN?: string;
+  /** 滞留通知を作るリポジトリ（例: Investorkabuto/STOCK_GAME） */
+  GITHUB_REPO?: string;
 }
 
 export const INITIAL_CASH = 10_000_000;

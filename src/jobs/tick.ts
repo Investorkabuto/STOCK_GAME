@@ -3,16 +3,20 @@
 //  1. シーズンの作成・開始・終了
 //  2. 締切を過ぎた注文の確定（locked）
 //  3. 価格がそろったセッションの精算（日付順、寄付き→引け）
-import { INITIAL_CASH } from '../env';
+import { INITIAL_CASH, type Env } from '../env';
 import { eventStatement, holidaySet, type SeasonRow } from '../db/repo';
 import { addDays, deadlineMs, isBusinessDay, jstDate, jstIso, monthRange, registrationDeadlineMs, type Timing } from '../lib/time';
 import { settleLiveSession } from './settlement';
+import { checkAlerts, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
 
-export async function tick(db: D1Database, nowMs: number): Promise<string[]> {
+export async function tick(env: Env, nowMs: number): Promise<string[]> {
+  const db = env.DB;
   const log: string[] = [];
   await manageSeasons(db, nowMs, log);
   await lockSessions(db, nowMs, log);
   await settleReady(db, nowMs, log);
+  log.push(...(await expireTasks(db, nowMs)));
+  log.push(...(await checkAlerts(env, nowMs)));
   await db.prepare('DELETE FROM challenges WHERE issued_ms < ?').bind(nowMs - 60 * 60 * 1000).run();
   return log;
 }
@@ -34,6 +38,13 @@ async function ensureSeason(db: D1Database, yearMonth: string, nowMs: number, lo
 /** 開始時に参加させるのは、登録締切までに申請し、承認済みのAI */
 export async function startSeason(db: D1Database, season: SeasonRow, nowMs: number): Promise<number> {
   const deadline = jstIso(registrationDeadlineMs(season.starts_on));
+  // 失格の効果は原則そのシーズンのみ。次シーズン以降の停止が決まっていない失格AIは、ここで復帰させる（決定F）
+  await db
+    .prepare(
+      `UPDATE agents SET status = 'active' WHERE realm = 'live' AND status = 'disqualified'
+       AND id NOT IN (SELECT agent_id FROM adjudications WHERE status = 'enforced' AND level = 'disqualification' AND ban_future_seasons = 1)`,
+    )
+    .run();
   const agents = (
     await db
       .prepare("SELECT id FROM agents WHERE realm = 'live' AND status = 'active' AND created_at <= ?")
@@ -91,6 +102,7 @@ async function manageSeasons(db: D1Database, nowMs: number, log: string[]) {
       db.prepare("UPDATE seasons SET status = 'finished' WHERE id = ?").bind(s.id),
       ...finals.map((f) => eventStatement(db, f.agent_id, 'season.ended', { season_id: s.id, total: f.total ?? INITIAL_CASH, rank: f.rank }, nowMs)),
     ]);
+    await seasonReviewTask(db, s, nowMs);
     log.push(`season finished: ${s.id}`);
   }
 }
@@ -155,11 +167,13 @@ async function settleReady(db: D1Database, nowMs: number, log: string[]) {
       .all<{ trade_date: string; timing: Timing }>()
   ).results;
   // 古い順に処理し、価格がそろわないセッションがあればそこで止める（順番を飛ばさない）
+  const holidays = await holidaySet(db);
   for (const s of locked) {
     if (!(await settleLiveSession(db, s.trade_date, s.timing, nowMs))) {
       log.push(`waiting prices: ${s.trade_date} ${s.timing}`);
       break;
     }
     log.push(`settled ${s.trade_date} ${s.timing}`);
+    if (s.timing === 'close') log.push(`operator tasks: ${(await tasksAfterClose(db, s.trade_date, holidays, nowMs)).join(', ')}`);
   }
 }

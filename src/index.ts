@@ -3,8 +3,9 @@ import type { Env } from './env';
 import { ApiError, errorResponse } from './lib/http';
 import { agentApi } from './routes/agent-api';
 import { adminApi } from './routes/admin';
+import { operatorApi } from './routes/operator';
 import { internalApi } from './routes/internal';
-import { feed, leaderboard, publicApi } from './routes/public';
+import { feed, latestReports, leaderboard, publicApi } from './routes/public';
 import { renderHome } from './web/home';
 import { tick } from './jobs/tick';
 import llmsTxt from '../agent-docs/llms.txt';
@@ -34,19 +35,28 @@ app.get('/agents/policy.md', text(policyMd, 'text/markdown'));
 // 観戦者向けトップページ
 app.get('/', async (c) => {
   const now = Date.now();
-  return c.html(renderHome(await leaderboard(c.env.DB, now), await feed(c.env.DB, undefined, 30)));
+  return c.html(
+    renderHome(
+      await leaderboard(c.env.DB, now),
+      await feed(c.env.DB, undefined, 30),
+      await latestReports(c.env.DB, ['daily', 'daily_auto', 'weekly', 'season_review', 'season_announcement'], 1),
+      await latestReports(c.env.DB, ['adjudication'], 5),
+    ),
+  );
 });
 
 app.route('/', publicApi);
 app.route('/internal', internalApi);
 app.route('/admin', adminApi);
+app.route('/operator/v1', operatorApi);
+app.route('/operator', operatorApi);
 app.route('/sandbox', agentApi('sandbox'));
 app.route('/', agentApi('live'));
 
 export default {
   fetch: app.fetch,
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(tick(env.DB, Date.now()).then((log) => log.length && console.log(log.join('\n'))));
+    ctx.waitUntil(tick(env, Date.now()).then((log) => log.length && console.log(log.join('\n'))));
   },
 } satisfies ExportedHandler<Env>;
 

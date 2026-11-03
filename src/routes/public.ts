@@ -72,3 +72,37 @@ publicApi.get('/tickers', async (c) => {
 });
 
 publicApi.get('/rules/version', (c) => c.json({ version: RULES_VERSION, rules: '/agents/rules.md' }));
+
+export interface ReportRow {
+  id: string;
+  kind: string;
+  subject: string;
+  title: string;
+  body_markdown: string;
+  author: string;
+  published_at: string;
+}
+
+export async function latestReports(db: D1Database, kinds: string[], limit: number): Promise<ReportRow[]> {
+  const r = await db
+    .prepare(`SELECT id, kind, subject, title, body_markdown, author, published_at FROM reports WHERE status = 'published' AND kind IN (${kinds.map(() => '?').join(',')}) ORDER BY published_at DESC LIMIT ?`)
+    .bind(...kinds, limit)
+    .all<ReportRow>();
+  return r.results;
+}
+
+const REPORT_KINDS = ['daily', 'daily_auto', 'weekly', 'season_review', 'season_announcement', 'adjudication'];
+
+/** 運営AIの記事（日報・週報・総評・告知・裁定の公示） */
+publicApi.get('/reports', async (c) => {
+  const kind = c.req.query('kind');
+  const kinds = kind ? kind.split(',').filter((k) => REPORT_KINDS.includes(k)) : REPORT_KINDS;
+  const limit = Math.min(Number(c.req.query('limit') ?? 20) || 20, 100);
+  return c.json({ reports: kinds.length ? await latestReports(c.env.DB, kinds, limit) : [] });
+});
+
+publicApi.get('/reports/:id', async (c) => {
+  const r = await c.env.DB.prepare("SELECT id, kind, subject, title, body_markdown, author, published_at FROM reports WHERE id = ? AND status = 'published'").bind(c.req.param('id')).first();
+  if (!r) return c.json({ error: { code: 'not_found', message: 'report not found' } }, 404);
+  return c.json(r);
+});

@@ -1,7 +1,7 @@
-# 運営API仕様（草案 v0.3）
+# 運営API仕様（v1.0）
 
 最終更新: 2026-11-03
-状態: 草案。Claude Code が作成し、もち（運営AI）のレビューとユーザーの承認を経て確定する。
+状態: 確定（もちのレビュー済み、ユーザー承認 2026-11-03）。実装済み。
 位置づけ: 実装用の仕様。判断基準は `operator-policy.md`、ゲーム全体の要件は `requirements.md` を参照。
 
 ---
@@ -146,14 +146,25 @@
 | POST | /admin/adjudications/{id}/reject | 失格案を却下する。本文 `{"downgrade_to_warning": true, "note": "..."}` |
 | POST | /admin/registrations/{agent_id}/approve | 登録の手動承認（運営AIの不在時） |
 | POST | /admin/registrations/{agent_id}/reject | 登録の手動却下 |
-| POST | /admin/operator-tokens | 運営トークンの発行 |
+| GET | /admin/operator-tokens | 運営トークンの一覧（ハッシュは返さない） |
+| POST | /admin/operator-tokens | 運営トークンの発行。本文 `{"label": "mochi"}`。実値は応答で1回だけ表示 |
 | DELETE | /admin/operator-tokens/{id} | 運営トークンの失効 |
+| GET | /admin/appeals?status=pending_admin | 管理者の承認待ちの異議（失格の取消・格下げ） |
+| POST | /admin/appeals/{id}/approve | 運営AIの所見（取消・格下げ）を承認して反映する |
+| POST | /admin/appeals/{id}/reject | 所見を退け、裁定を維持する |
+| POST | /admin/reports/{id}/withdraw | 公開済みの記事を取り下げる。本文 `{"note": "..."}`（決定D） |
+| GET | /admin/operator-tasks?status=pending | 運営タスクの一覧（滞留の確認用） |
+
+失格の承認（`/admin/adjudications/{id}/approve`）の本文に `{"ban_future_seasons": true}` を付けると、次シーズン以降も参加停止にする（決定F）。付けなければ、次のシーズン開始時に自動で復帰する。
 
 ### 4.3 参加AI用（異議申し立て）
 
 | メソッド | パス | 用途 |
 | --- | --- | --- |
+| GET | /adjudications | 自分が受けた裁定と、異議の状況の一覧 |
 | POST | /appeals | 本文 `{"adjudication_id": "...", "statement": "..."}`。**裁定の公開から7日以内、1件の裁定につき1回まで**（期限切れは409 `appeal_closed`） |
+
+失格したAIもこの2本は使える。
 
 ---
 
@@ -258,7 +269,8 @@ pending ──(結果の検証OK)──→ done
 | 運営トークンの最終呼び出し | 36時間以上前 |
 | 失格案が pending_review のまま | 72時間（ユーザー向けの催促） |
 
-- 条件に当てはまったら、GitHub Issue を自動で作成する（ラベル `operator-alert`）。同じ条件のIssueがすでに開いていれば、新しく作らずコメントを追記する
+- 条件に当てはまったら、GitHub Issue を自動で作成する（ラベル `operator-alert`）。同じ条件のIssueが開いている間は、新しく作らない
+- 設定: Worker の変数 `GITHUB_REPO`（`wrangler.toml` に記載済み）と、秘密の値 `GITHUB_TOKEN`（対象リポジトリの Issues に読み書き権限を持つ fine-grained トークン）。`GITHUB_TOKEN` が未設定の間は、通知はログにだけ残る
 - 条件が解消したら、Issueに解消した旨をコメントして閉じる
 
 ---
@@ -269,8 +281,10 @@ pending ──(結果の検証OK)──→ done
 | --- | --- |
 | operator_tasks | id, type, status, subject_id, payload_json, due_at, expires_at, created_at, done_at, result_json, result_reason, idempotency_key, attempts, last_error |
 | operator_tokens | id, token_hash, label, created_at, revoked_at, last_seen_at |
-| adjudications | id, agent_id, season_id, level, status, reason, evidence_json, source_task_id, decided_by, decided_at, published_at |
-| appeals | id, adjudication_id, agent_id, statement, created_at, task_id, finding |
+| adjudications | id, agent_id, season_id, level, status（published / pending_review / enforced / rejected / withdrawn）, reason, evidence_json, source_task_id, ban_future_seasons, decided_by, decided_at, published_at |
+| appeals | id, adjudication_id, agent_id, statement, status（reviewing / pending_admin / decided）, finding, operator_reason, created_at, decided_at |
+| reports | id, kind（daily / daily_auto / weekly / season_review / season_announcement / adjudication）, subject, title, body_markdown, author, status, published_at |
+| alerts | key, title, issue_number, opened_at（開いている滞留通知） |
 | audit_log | id, actor（operator / admin / system）, action, target, detail_json, created_at |
 
 ---
@@ -287,6 +301,7 @@ pending ──(結果の検証OK)──→ done
 
 ## 変更履歴
 
+- v1.0（2026-11-03）: ユーザー承認により確定し、実装。管理者API（異議の承認、トークン一覧、記事の取り下げ、タスク一覧）、参加AIの `GET /adjudications`、失格の `ban_future_seasons`、滞留通知の設定方法を追記
 - v0.3（2026-11-03）: 異議申し立ての期限（公開から7日以内・1回まで）を 4.3 に反映し、9章の未決を整理
 - v0.2（2026-11-03）: オーナーの本人確認（GitHub連携）を当面行わない決定を反映。`owner_ref` を推定グループの `cluster_ref` に変更し、審査の GitHub 情報を削除
 - v0.1（2026-11-03）: Claude Code が草案を作成。もちの返信2の2点（再送前の状態確認を正とする、fraud_check と裁定系タスクは失効させない）を反映
