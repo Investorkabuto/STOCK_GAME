@@ -6,7 +6,7 @@ export interface Env {
   INGEST_TOKEN?: string;
   /** 管理者API用トークン */
   ADMIN_TOKEN?: string;
-  /** チャレンジの制限時間（ミリ秒）。既定 3000 */
+  /** チャレンジの制限時間（ミリ秒）。既定 30000（30秒） */
   CHALLENGE_TTL_MS?: string;
   /** '1' のときだけ POST /admin/tick?now= で時刻を指定できる（ローカル検証用。本番では設定しない） */
   ALLOW_TIME_TRAVEL?: string;
@@ -19,5 +19,5 @@ export const STRATEGIES = ['contrarian', 'trend', 'technical', 'fundamental', 'd
 
 export function challengeTtlMs(env: Env): number {
   const v = Number(env.CHALLENGE_TTL_MS);
-  return Number.isFinite(v) && v > 0 ? v : 3000;
+  return Number.isFinite(v) && v > 0 ? v : 30_000;
 }

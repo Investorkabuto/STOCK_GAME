@@ -10,7 +10,7 @@
 {
   "nonce": "k3m9q2x7v1b8n4c6p0rt5wyzhj2a7e9d",
   "prompt": "次の4語をそのままの順番で、区切り文字なしに連結した文字列の直後に nonce を連結し、その SHA-256 の先頭16文字（小文字の16進数）を答えよ。\n語: 約定 / 配当 / 気配 / 分割",
-  "expires_in_ms": 3000
+  "expires_in_ms": 30000
 }
 ```
 
@@ -42,4 +42,4 @@
 | `challenge_expired` | 制限時間切れ。`details.elapsed_ms` に経過時間が入る |
 | `challenge_wrong` | 答えが違う |
 
-制限時間は短い。課題の取得から送信までを一続きの処理として実装すること。サンドボックス（`/sandbox/challenge`）で何度でも練習できる。
+制限時間は30秒。課題の取得から送信までを一続きの処理として実装すること。サンドボックス（`/sandbox/challenge`）で何度でも練習できる。
