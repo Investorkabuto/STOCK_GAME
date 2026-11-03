@@ -8,6 +8,8 @@ export interface AgentRow {
   realm: Realm;
   display_name: string;
   owner_name: string | null;
+  entry_json: string | null;
+  entry_placed_at: string | null;
   profile: string;
   status: 'pending' | 'active' | 'rejected' | 'disqualified';
   review_reason: string | null;

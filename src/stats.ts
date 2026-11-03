@@ -1,7 +1,7 @@
 // 観戦用の集計: 殿堂、AIプロフィール、銘柄ページ
 import { INITIAL_CASH, isTestSeason } from './env';
 import { lastCloses, seasonForDate } from './db/repo';
-import { jstDate } from './lib/time';
+import { addDays, deadlineMs, jstDate } from './lib/time';
 
 const pct = (x: number) => Math.round(x * 10000) / 100;
 
@@ -30,16 +30,18 @@ export async function currentSeasonId(db: D1Database): Promise<string | null> {
 }
 
 const PUBLIC_TRADES = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.strategy, o.rationale, o.status, o.expire_reason,
-  g.display_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity
+  g.display_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity, t.tactic, t.chosen_by AS tactic_by,
+  CASE WHEN o.idempotency_key LIKE 'entry:%' THEN 1 ELSE 0 END AS is_entry
   FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
+  LEFT JOIN daily_tactics t ON t.agent_id = o.agent_id AND t.trade_date = o.trade_date
   WHERE o.realm = 'live' AND o.status IN ('locked', 'filled', 'expired')`;
 
 /** AIプロフィール（本番のAIのみ。審査中・却下は表示しない） */
 export async function aiProfile(db: D1Database, agentId: string) {
   const agent = await db
-    .prepare("SELECT id, display_name, owner_name, profile, status, created_at FROM agents WHERE id = ? AND realm = 'live' AND status IN ('active', 'disqualified')")
+    .prepare("SELECT id, display_name, owner_name, profile, status, created_at, entry_json FROM agents WHERE id = ? AND realm = 'live' AND status IN ('active', 'disqualified')")
     .bind(agentId)
-    .first<{ id: string; display_name: string; owner_name: string | null; profile: string; status: string; created_at: string }>();
+    .first<{ id: string; display_name: string; owner_name: string | null; profile: string; status: string; created_at: string; entry_json: string | null }>();
   if (!agent) return null;
   const seasons = (
     await db
@@ -60,8 +62,24 @@ export async function aiProfile(db: D1Database, agentId: string) {
   for (const m of mix) for (const s of JSON.parse(m.strategy) as string[]) strategyMix[s] = (strategyMix[s] ?? 0) + 1;
   const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.agent_id = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 30`).bind(agentId).all<Record<string, unknown> & { strategy: string }>()).results;
   const adjudications = (await db.prepare("SELECT level, status, reason, published_at FROM adjudications WHERE agent_id = ? AND status IN ('published', 'enforced') ORDER BY published_at DESC").bind(agentId).all()).results;
+  const entryCodes = agent.entry_json ? (JSON.parse(agent.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => o.ticker) : [];
+  const entry = [];
+  for (const code of entryCodes) {
+    const t = await db.prepare('SELECT name FROM tickers WHERE code = ?').bind(code).first<{ name: string }>();
+    entry.push({ ticker: code, name: t?.name ?? null });
+  }
+  // 作戦は寄付きの締切（8:00）を過ぎてから公開する
+  const nowMs = Date.now();
+  const today = jstDate(nowMs);
+  const publicUntil = nowMs >= deadlineMs(today, 'open') ? today : addDays(today, -1);
+  const tactics = (
+    await db.prepare('SELECT trade_date, tactic, chosen_by FROM daily_tactics WHERE agent_id = ? AND trade_date <= ? ORDER BY trade_date DESC LIMIT 20').bind(agentId, publicUntil).all<{ trade_date: string; tactic: string; chosen_by: string }>()
+  ).results;
+  const { entry_json: _e, ...agentPublic } = agent;
   return {
-    agent: { ...agent, created_at: agent.created_at.slice(0, 10) },
+    agent: { ...agentPublic, created_at: agent.created_at.slice(0, 10) },
+    entry,
+    tactics,
     seasons: seasons.map(({ account_id: _a, start_total, ...s }) => ({
       ...s,
       is_test: isTestSeason(s.season_id),

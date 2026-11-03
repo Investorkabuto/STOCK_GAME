@@ -77,6 +77,14 @@ const MIGRATIONS: Migration[] = [
       { kind: 'sql', sql: 'CREATE INDEX IF NOT EXISTS commentary_recent ON commentary (trade_date, timing)' },
     ],
   },
+  {
+    name: '0007_entry_and_tactics',
+    steps: [
+      { kind: 'column', table: 'agents', column: 'entry_json', type: 'TEXT' },
+      { kind: 'column', table: 'agents', column: 'entry_placed_at', type: 'TEXT' },
+      { kind: 'sql', sql: "CREATE TABLE IF NOT EXISTS daily_tactics (realm TEXT NOT NULL, agent_id TEXT NOT NULL REFERENCES agents (id), trade_date TEXT NOT NULL, tactic TEXT NOT NULL CHECK (tactic IN ('gangan', 'inochi', 'iroiro')), chosen_by TEXT NOT NULL CHECK (chosen_by IN ('owner', 'ai')), declared_at TEXT NOT NULL, PRIMARY KEY (agent_id, trade_date))" },
+    ],
+  },
 ];
 
 async function hasColumn(db: D1Database, table: string, column: string): Promise<boolean> {

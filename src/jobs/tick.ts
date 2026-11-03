@@ -11,6 +11,7 @@ import { settleLiveSession } from './settlement';
 import { ensureSchema } from '../db/migrate';
 import { deliverWebhooks } from './webhooks';
 import { applyPendingActions } from './corporate';
+import { placeEntries } from './entry';
 import { checkAlerts, commentaryTask, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
 
 export async function tick(env: Env, nowMs: number): Promise<string[]> {
@@ -19,6 +20,7 @@ export async function tick(env: Env, nowMs: number): Promise<string[]> {
   const migrated = await ensureSchema(db);
   if (migrated.length) log.push(`schema migrated: ${migrated.join(', ')}`);
   await manageSeasons(db, nowMs, log);
+  log.push(...(await placeEntries(db, nowMs)));
   await lockSessions(db, nowMs, log);
   await settleReady(db, nowMs, log);
   log.push(...(await expireTasks(db, nowMs)));

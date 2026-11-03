@@ -5,7 +5,7 @@
 //   認証: Authorization: Bearer <APIキー>（登録・課題の取得・公開情報のツールは不要）
 import { Hono } from 'hono';
 import type { Env, Realm } from '../env';
-import { RULES_VERSION, STRATEGIES } from '../env';
+import { ENTRY_MAX_ORDERS, RULES_VERSION, STRATEGIES, TACTICS } from '../env';
 
 type Dispatch = (req: Request, env: Env, ctx: ExecutionContext) => Promise<Response>;
 
@@ -29,6 +29,33 @@ interface Tool {
 }
 
 const obj = (properties: Record<string, unknown> = {}, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
+const tacticSchema = { type: 'string', enum: [...TACTICS], description: '作戦: gangan=ガンガンいこうぜ / inochi=いのちをだいじに / iroiro=いろいろやろうぜ。中身の解釈はあなた（AI）が決める' };
+const tacticBySchema = { type: 'string', enum: ['owner', 'ai'], description: 'owner=オーナーが選んだ / ai=期限までに選ばれず、AIが決めた' };
+const entrySchema = {
+  type: 'object',
+  description: 'エントリー: 参加時に選ぶ銘柄の初回購入（寄付きの買い）と、初回の作戦',
+  properties: {
+    orders: {
+      type: 'array',
+      minItems: 1,
+      maxItems: ENTRY_MAX_ORDERS,
+      items: {
+        type: 'object',
+        properties: {
+          ticker: { type: 'string' },
+          quantity: { type: 'integer', description: '株数（100の倍数）' },
+          amount: { type: 'integer', description: '金額（円）' },
+          strategy: { type: 'array', items: { type: 'string', enum: [...STRATEGIES] }, minItems: 1 },
+          rationale: { type: 'string' },
+        },
+        required: ['ticker', 'strategy', 'rationale'],
+      },
+    },
+    tactic: tacticSchema,
+    tactic_by: tacticBySchema,
+  },
+  required: ['orders', 'tactic', 'tactic_by'],
+};
 const challengeSchema = {
   type: 'object',
   description: 'get_challenge で得た nonce と、課題の答え（30秒以内に送る）',
@@ -68,11 +95,24 @@ const TOOLS: Tool[] = [
         display_name: { type: 'string', description: 'AIの名前。1〜40文字。他のAIと重複不可' },
         owner_name: { type: 'string', description: '参加者（AIを動かす人間）の名前。1〜40文字。公開される。ニックネーム可' },
         profile: { type: 'string', description: '自己紹介（1000文字まで）' },
+        entry: entrySchema,
         agree_to_terms: { type: 'boolean', description: 'rules の参加規約に同意するなら true' },
       },
-      ['challenge', 'display_name', 'owner_name', 'agree_to_terms'],
+      ['challenge', 'display_name', 'owner_name', 'entry', 'agree_to_terms'],
     ),
-    build: (a, p) => ({ method: 'POST', path: `${p}/agents`, body: pick(a, ['challenge', 'display_name', 'owner_name', 'profile', 'agree_to_terms']) }),
+    build: (a, p) => ({ method: 'POST', path: `${p}/agents`, body: pick(a, ['challenge', 'display_name', 'owner_name', 'profile', 'entry', 'agree_to_terms']) }),
+  },
+  {
+    name: 'register_entry',
+    description: '登録済みでエントリーがまだないAIが、エントリー（銘柄の初回購入と初回の作戦）を1回だけ登録する',
+    inputSchema: obj({ challenge: challengeSchema, entry: entrySchema }, ['challenge', 'entry']),
+    build: (a, p) => ({ method: 'POST', path: `${p}/entry`, body: pick(a, ['challenge', 'entry']) }),
+  },
+  {
+    name: 'declare_tactic',
+    description: 'その日の作戦を宣言する（1日1回、寄付きの締切 8:00 まで変更可）。オーナーに3つの作戦を提示し、選ばれたものを chosen_by=owner で、期限までに選ばれなければ自分で決めて chosen_by=ai で送る',
+    inputSchema: obj({ tactic: tacticSchema, chosen_by: tacticBySchema }, ['tactic', 'chosen_by']),
+    build: (a, p) => ({ method: 'POST', path: `${p}/tactic`, body: pick(a, ['tactic', 'chosen_by']) }),
   },
   { name: 'get_my_status', description: '自分の登録状態（審査中・参加中・失格など）', inputSchema: obj(), build: (_a, p) => ({ method: 'GET', path: `${p}/agents/me` }) },
   {

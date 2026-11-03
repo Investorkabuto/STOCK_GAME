@@ -3,14 +3,14 @@ import { Hono } from 'hono';
 import { INITIAL_CASH, isTestSeason, RULES_VERSION, type Env } from '../env';
 import { returnPct } from '../lib/engine';
 import { holidaySet, seasonForDate } from '../db/repo';
-import { addDays, isBusinessDay, jstDate } from '../lib/time';
+import { addDays, deadlineMs, isBusinessDay, jstDate } from '../lib/time';
 import { enforceRateLimit } from '../lib/http';
 import { aiProfile, hallOfFame, stockPage } from '../stats';
 
 export const publicApi = new Hono<{ Bindings: Env }>();
 
 // 公開のJSON（ランキング・フィードなど）も、接続元ごとに数を制限する
-for (const path of ['/leaderboard', '/commentary', '/feed', '/calendar', '/tickers', '/reports', '/reports/*', '/rules/version', '/api/*']) {
+for (const path of ['/leaderboard', '/contestants', '/commentary', '/feed', '/calendar', '/tickers', '/reports', '/reports/*', '/rules/version', '/api/*']) {
   publicApi.use(path, async (c, next) => {
     await enforceRateLimit(c);
     await next();
@@ -61,6 +61,61 @@ export async function leaderboard(db: D1Database, nowMs: number): Promise<{ seas
   };
 }
 
+export interface Contestant {
+  agent_id: string;
+  display_name: string;
+  owner_name: string | null;
+  entry: { ticker: string; name: string | null }[];
+  entry_placed: boolean;
+  /** 公開済みの最新の作戦（寄付きの締切を過ぎたもの） */
+  tactic: { trade_date: string; tactic: string; chosen_by: string } | null;
+}
+
+/** 現在の大会の出場AI（エントリー銘柄と、公開済みの最新の作戦） */
+export async function contestants(db: D1Database, nowMs: number): Promise<Contestant[]> {
+  const season = await seasonForDate(db, 'live', jstDate(nowMs));
+  if (!season) return [];
+  const rows = (
+    await db
+      .prepare(
+        `SELECT g.id AS agent_id, g.display_name, g.owner_name, g.entry_json, g.entry_placed_at FROM accounts a JOIN agents g ON g.id = a.agent_id
+         WHERE a.season_id = ? AND g.status = 'active' ORDER BY g.created_at`,
+      )
+      .bind(season.id)
+      .all<{ agent_id: string; display_name: string; owner_name: string | null; entry_json: string | null; entry_placed_at: string | null }>()
+  ).results;
+  const today = jstDate(nowMs);
+  const publicUntil = nowMs >= deadlineMs(today, 'open') ? today : addDays(today, -1);
+  const tactics = new Map(
+    (
+      await db
+        .prepare(
+          `SELECT t.agent_id, t.trade_date, t.tactic, t.chosen_by FROM daily_tactics t
+           WHERE t.realm = 'live' AND t.trade_date = (SELECT MAX(trade_date) FROM daily_tactics x WHERE x.agent_id = t.agent_id AND x.trade_date <= ?)`,
+        )
+        .bind(publicUntil)
+        .all<{ agent_id: string; trade_date: string; tactic: string; chosen_by: string }>()
+    ).results.map((t) => [t.agent_id, { trade_date: t.trade_date, tactic: t.tactic, chosen_by: t.chosen_by }]),
+  );
+  const codes = [...new Set(rows.flatMap((r) => (r.entry_json ? (JSON.parse(r.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => o.ticker) : [])))];
+  const names = new Map<string, string>();
+  for (let i = 0; i < codes.length; i += 50) {
+    const chunk = codes.slice(i, i + 50);
+    const r = await db.prepare(`SELECT code, name FROM tickers WHERE code IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all<{ code: string; name: string }>();
+    for (const t of r.results) names.set(t.code, t.name);
+  }
+  return rows.map((r) => ({
+    agent_id: r.agent_id,
+    display_name: r.display_name,
+    owner_name: r.owner_name,
+    entry: r.entry_json ? (JSON.parse(r.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => ({ ticker: o.ticker, name: names.get(o.ticker) ?? null })) : [],
+    entry_placed: r.entry_placed_at != null,
+    tactic: tactics.get(r.agent_id) ?? null,
+  }));
+}
+
+publicApi.get('/contestants', async (c) => c.json({ contestants: await contestants(c.env.DB, Date.now()) }));
+
 /** 電光掲示板に流す実況（新しい順） */
 export async function latestCommentary(db: D1Database, limit: number) {
   const r = await db
@@ -77,8 +132,10 @@ publicApi.get('/leaderboard', async (c) => c.json(await leaderboard(c.env.DB, Da
 /** 締切後に公開される売買（受付中の注文は見せない） */
 export async function feed(db: D1Database, date: string | undefined, limit: number) {
   let sql = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.strategy, o.rationale, o.status, o.expire_reason,
-                    g.display_name, g.owner_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity
+                    g.display_name, g.owner_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity, t.tactic, t.chosen_by AS tactic_by,
+                    CASE WHEN o.idempotency_key LIKE 'entry:%' THEN 1 ELSE 0 END AS is_entry
              FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
+             LEFT JOIN daily_tactics t ON t.agent_id = o.agent_id AND t.trade_date = o.trade_date
              WHERE o.realm = 'live' AND o.status IN ('locked', 'filled', 'expired')`;
   const args: unknown[] = [];
   if (date) { sql += ' AND o.trade_date = ?'; args.push(date); }
