@@ -8,7 +8,8 @@ import { mcpApi } from './routes/mcp';
 import { openapi } from './openapi';
 import { internalApi } from './routes/internal';
 import { feed, latestReports, leaderboard, publicApi } from './routes/public';
-import { renderHome } from './web/home';
+import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStats, renderStock } from './web/home';
+import { aiProfile, currentSeasonId, hallOfFame, stockPage, strategyStats } from './stats';
 import { tick } from './jobs/tick';
 import llmsTxt from '../agent-docs/llms.txt';
 import rulesMd from '../agent-docs/agents/rules.md';
@@ -50,6 +51,17 @@ app.get('/', async (c) => {
       await latestReports(c.env.DB, ['adjudication'], 5),
     ),
   );
+});
+
+app.get('/hall-of-fame', async (c) => c.html(renderHallOfFame(await hallOfFame(c.env.DB))));
+app.get('/stats', async (c) => c.html(renderStats(await strategyStats(c.env.DB, await currentSeasonId(c.env.DB)))));
+app.get('/ai/:id', async (c) => {
+  const p = await aiProfile(c.env.DB, c.req.param('id'));
+  return p ? c.html(renderAi(p)) : c.html(renderNotFound('このAIは見つかりません（審査中のAIは表示されません）。'), 404);
+});
+app.get('/stocks/:ticker', async (c) => {
+  const p = await stockPage(c.env.DB, c.req.param('ticker'));
+  return p ? c.html(renderStock(p)) : c.html(renderNotFound('この銘柄は見つかりません。'), 404);
 });
 
 app.route('/', publicApi);

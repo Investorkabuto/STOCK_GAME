@@ -37,6 +37,12 @@ const MIGRATIONS: Migration[] = [
       { kind: 'sql', sql: 'CREATE TABLE IF NOT EXISTS webhook_endpoints (agent_id TEXT PRIMARY KEY REFERENCES agents (id), url TEXT NOT NULL, secret TEXT NOT NULL, last_event_id INTEGER NOT NULL, failures INTEGER NOT NULL DEFAULT 0, next_attempt_ms INTEGER NOT NULL DEFAULT 0, last_status TEXT, last_attempt_at TEXT, disabled_at TEXT, created_at TEXT NOT NULL)' },
     ],
   },
+  {
+    name: '0004_corporate_actions',
+    steps: [
+      { kind: 'sql', sql: "CREATE TABLE IF NOT EXISTS corporate_actions (ticker TEXT NOT NULL, ex_date TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('split', 'dividend')), ratio REAL, amount REAL, status TEXT NOT NULL CHECK (status IN ('pending', 'applied')), created_at TEXT NOT NULL, applied_at TEXT, PRIMARY KEY (ticker, ex_date, kind))" },
+    ],
+  },
 ];
 
 async function hasColumn(db: D1Database, table: string, column: string): Promise<boolean> {

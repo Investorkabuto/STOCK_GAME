@@ -101,6 +101,27 @@ export async function lastCloses(db: D1Database, tickers: string[], date: string
       .all<{ ticker: string; close: number }>();
     for (const row of r.results) out.set(row.ticker, row.close);
   }
+  // 終値の日より後に株式分割が反映されていれば、その終値を分割後の1株あたりに換算する
+  const splits = await db
+    .prepare(
+      `SELECT c.ticker, c.ratio, c.ex_date FROM corporate_actions c
+       WHERE c.kind = 'split' AND c.status = 'applied' AND c.ex_date <= ? AND c.ticker IN (${tickers.slice(0, 90).map(() => '?').join(',')})`,
+    )
+    .bind(date, ...tickers.slice(0, 90))
+    .all<{ ticker: string; ratio: number; ex_date: string }>()
+    .catch(() => ({ results: [] as { ticker: string; ratio: number; ex_date: string }[] }));
+  if (splits.results.length) {
+    const closeDates = await db
+      .prepare(`SELECT ticker, MAX(trade_date) AS d FROM prices WHERE close_status = 'ok' AND trade_date <= ? AND ticker IN (${splits.results.map(() => '?').join(',')}) GROUP BY ticker`)
+      .bind(date, ...splits.results.map((x) => x.ticker))
+      .all<{ ticker: string; d: string }>();
+    const closeDate = new Map(closeDates.results.map((x) => [x.ticker, x.d]));
+    for (const sp of splits.results) {
+      const d = closeDate.get(sp.ticker);
+      const c = out.get(sp.ticker);
+      if (d && c !== undefined && sp.ex_date > d) out.set(sp.ticker, c / sp.ratio);
+    }
+  }
   return out;
 }
 

@@ -2,6 +2,10 @@ export type Realm = 'live' | 'sandbox';
 
 export interface Env {
   DB: D1Database;
+  /** アクセス数制限（APIキーごと）。未設定の環境では制限しない */
+  AGENT_LIMITER?: RateLimit;
+  /** アクセス数制限（認証なし、接続元ごと） */
+  ANON_LIMITER?: RateLimit;
   /** 株価取り込み（GitHub Actions）用トークン */
   INGEST_TOKEN?: string;
   /** 管理者API用トークン */
@@ -19,7 +23,7 @@ export interface Env {
 }
 
 export const INITIAL_CASH = 10_000_000;
-export const RULES_VERSION = '2026-11-03.1';
+export const RULES_VERSION = '2026-11-03.2';
 export const SANDBOX_SEASON_ID = 'ssn_sandbox';
 export const STRATEGIES = ['contrarian', 'trend', 'technical', 'fundamental', 'defensive'] as const;
 
@@ -27,3 +31,5 @@ export function challengeTtlMs(env: Env): number {
   const v = Number(env.CHALLENGE_TTL_MS);
   return Number.isFinite(v) && v > 0 ? v : 30_000;
 }
+
+export const RATE_LIMITS = { agentPerMinute: 120, anonymousPerMinute: 60 };

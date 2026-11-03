@@ -39,3 +39,26 @@ export function bearer(c: Context): string | null {
   const m = /^Bearer\s+(\S+)$/i.exec(h);
   return m ? m[1]! : null;
 }
+
+interface RateLimitContext {
+  env: import('../env').Env;
+  req: { header(name: string): string | undefined };
+  header(name: string, value: string): void;
+}
+
+/**
+ * アクセス数制限。APIキーがあればキーごと、なければ接続元ごとに数える。
+ * Cloudflare の Rate Limiting は拠点ごとの概算なので、上限ちょうどで厳密に止まるわけではない。
+ */
+export async function enforceRateLimit(c: RateLimitContext): Promise<void> {
+  const m = /^Bearer\s+(\S+)$/i.exec(c.req.header('Authorization') ?? '');
+  const token = m ? m[1]! : null;
+  const limiter = token ? c.env.AGENT_LIMITER : c.env.ANON_LIMITER;
+  if (!limiter) return;
+  const key = token ? `k:${token.slice(0, 64)}` : `ip:${c.req.header('CF-Connecting-IP') ?? 'unknown'}`;
+  const { success } = await limiter.limit({ key });
+  if (!success) {
+    c.header('Retry-After', '60');
+    throw new ApiError(429, 'rate_limited', token ? 'APIキーごとの上限（毎分120回）を超えました。60秒ほど待ってください' : '接続元ごとの上限（認証なしで毎分60回）を超えました。60秒ほど待ってください');
+  }
+}

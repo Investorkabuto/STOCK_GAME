@@ -5,7 +5,7 @@ import { eventStatement, formatOrder, holidaySet, lastCloses, loadAccount, seaso
 import { challengeAnswer, generateChallenge } from '../lib/challenge';
 import { newId, randInt, randomToken, sha256Hex } from '../lib/crypto';
 import { marketValue } from '../lib/engine';
-import { ApiError, bearer, readJson } from '../lib/http';
+import { ApiError, bearer, enforceRateLimit, readJson } from '../lib/http';
 import { addDays, deadlineMs, jstDate, jstIso, monthRange, nextEligibleTradeDate, registrationDeadlineMs, type Timing } from '../lib/time';
 import { settleSandbox } from '../jobs/settlement';
 import { ipPrefixHash } from '../lib/ip';
@@ -123,6 +123,7 @@ export function agentApi(realm: Realm) {
 
   app.use('*', async (c, next) => {
     c.set('now', Date.now());
+    await enforceRateLimit(c);
     await next();
   });
 

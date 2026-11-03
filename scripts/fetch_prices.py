@@ -69,6 +69,33 @@ def daily_bars(tickers: list[str], trade_date: str) -> dict[str, dict]:
     return out
 
 
+def sync_corporate_actions() -> None:
+    """保有されている銘柄の、直近10日の配当・株式分割を登録する（権利落ち日の精算前に反映される）"""
+    tickers = api("GET", "/internal/held-tickers")["tickers"]
+    if not tickers:
+        return
+    symbols = [f"{t}.T" for t in tickers]
+    df = yf.download(symbols, period="10d", interval="1d", actions=True, group_by="ticker",
+                     auto_adjust=False, progress=False, threads=True)
+    actions: list[dict] = []
+    for t, s in zip(tickers, symbols):
+        try:
+            sub = df[s] if getattr(df.columns, "nlevels", 1) > 1 else df
+        except KeyError:
+            continue
+        for idx, row in sub.iterrows():
+            date = idx.strftime("%Y-%m-%d")
+            div = float(row.get("Dividends", 0) or 0)
+            split = float(row.get("Stock Splits", 0) or 0)
+            if div > 0 and not math.isnan(div):
+                actions.append({"ticker": t, "ex_date": date, "kind": "dividend", "amount": round(div, 4)})
+            if split > 0 and not math.isnan(split) and split != 1:
+                actions.append({"ticker": t, "ex_date": date, "kind": "split", "ratio": split})
+    if actions:
+        res = api("POST", "/internal/corporate-actions", {"actions": actions})
+        print(f"corporate actions: {res['upserted']}")
+
+
 def usable(v: float) -> bool:
     return v is not None and not math.isnan(v) and v > 0
 
@@ -84,6 +111,10 @@ def main() -> int:
         return 0 if not df.empty else 1
     now = dt.datetime.now(JST)
 
+    try:
+        sync_corporate_actions()
+    except Exception as e:  # 配当・分割の取得に失敗しても、株価の取り込みは止めない
+        print(f"WARN corporate actions: {e}", file=sys.stderr)
     requests = api("GET", "/internal/price-requests")["requests"]
     if not requests:
         print("no pending price requests")

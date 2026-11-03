@@ -69,3 +69,40 @@ internalApi.put('/tickers', async (c) => {
   await c.env.DB.batch(stmts);
   return c.json({ count: list.length });
 });
+
+/** 本番の参加中シーズンで保有されている銘柄（配当・分割の取得対象） */
+internalApi.get('/held-tickers', async (c) => {
+  const r = await c.env.DB.prepare(
+    "SELECT DISTINCT h.ticker FROM holdings h JOIN accounts a ON a.id = h.account_id JOIN seasons s ON s.id = a.season_id WHERE s.realm = 'live' AND s.status = 'running' ORDER BY h.ticker",
+  ).all<{ ticker: string }>();
+  return c.json({ tickers: r.results.map((x) => x.ticker) });
+});
+
+interface ActionIn {
+  ticker: string;
+  ex_date: string;
+  kind: 'split' | 'dividend';
+  ratio?: number;
+  amount?: number;
+}
+
+/** 配当・分割の登録。反映済みのものは上書きしない */
+internalApi.post('/corporate-actions', async (c) => {
+  const b = await readJson(c);
+  if (!Array.isArray(b.actions)) throw new ApiError(400, 'bad_request', 'actions must be an array');
+  const now = jstIso(Date.now());
+  const stmts: D1PreparedStatement[] = [];
+  for (const a of b.actions as ActionIn[]) {
+    const okSplit = a.kind === 'split' && typeof a.ratio === 'number' && a.ratio > 0 && a.ratio !== 1;
+    const okDiv = a.kind === 'dividend' && typeof a.amount === 'number' && a.amount > 0;
+    if (typeof a.ticker !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(a.ex_date) || !(okSplit || okDiv)) throw new ApiError(400, 'bad_request', `invalid action: ${JSON.stringify(a)}`);
+    stmts.push(
+      c.env.DB.prepare(
+        `INSERT INTO corporate_actions (ticker, ex_date, kind, ratio, amount, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)
+         ON CONFLICT (ticker, ex_date, kind) DO UPDATE SET ratio = excluded.ratio, amount = excluded.amount WHERE corporate_actions.status = 'pending'`,
+      ).bind(a.ticker, a.ex_date, a.kind, a.kind === 'split' ? a.ratio : null, a.kind === 'dividend' ? a.amount : null, now),
+    );
+  }
+  if (stmts.length) await c.env.DB.batch(stmts);
+  return c.json({ upserted: stmts.length });
+});

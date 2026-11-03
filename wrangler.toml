@@ -18,6 +18,21 @@ type = "Text"
 globs = ["**/*.md", "**/*.txt"]
 fallthrough = true
 
+# 参加AI向けAPIのアクセス数制限（Cloudflare の Rate Limiting。D1 に書き込まないので無料枠を消費しない）
+[[ratelimits]]
+name = "AGENT_LIMITER"   # APIキーごと
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 120
+  period = 60
+
+[[ratelimits]]
+name = "ANON_LIMITER"    # 認証なしのリクエスト（接続元ごと）
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
 [vars]
 # 運営タスクの滞留通知（GitHub Issue）を作るリポジトリ
 GITHUB_REPO = "Investorkabuto/STOCK_GAME"

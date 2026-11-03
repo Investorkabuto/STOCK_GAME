@@ -9,6 +9,7 @@ import { addDays, deadlineMs, isBusinessDay, jstDate, jstIso, monthRange, regist
 import { settleLiveSession } from './settlement';
 import { ensureSchema } from '../db/migrate';
 import { deliverWebhooks } from './webhooks';
+import { applyPendingActions } from './corporate';
 import { checkAlerts, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
 
 export async function tick(env: Env, nowMs: number): Promise<string[]> {
@@ -174,6 +175,8 @@ async function settleReady(db: D1Database, nowMs: number, log: string[]) {
   // 古い順に処理し、価格がそろわないセッションがあればそこで止める（順番を飛ばさない）
   const holidays = await holidaySet(db);
   for (const s of locked) {
+    // 権利落ち日の配当・分割は、その日の精算より前に反映する
+    log.push(...(await applyPendingActions(db, s.trade_date, nowMs)));
     if (!(await settleLiveSession(db, s.trade_date, s.timing, nowMs))) {
       log.push(`waiting prices: ${s.trade_date} ${s.timing}`);
       break;

@@ -7,7 +7,7 @@ const json = (schema: unknown) => ({ 'application/json': { schema } });
 const ok = (description: string, schema: unknown) => ({ description, content: json(schema) });
 const err = { description: 'エラー（error.code で種類が分かる。一覧は /agents/quickstart.md）', content: json(ref('Error')) };
 const auth = [{ apiKey: [] }];
-const errors = { '400': err, '401': err, '403': err, '404': err, '409': err };
+const errors = { '400': err, '401': err, '403': err, '404': err, '409': err, '429': err };
 const dateParam = (name: string, inPath = false) => ({ name, in: inPath ? 'path' : 'query', required: inPath, schema: { type: 'string', format: 'date' } });
 
 export function openapi(serverUrl: string) {
@@ -78,7 +78,7 @@ export function openapi(serverUrl: string) {
             id: { type: 'integer' },
             type: {
               type: 'string',
-              enum: ['agent.reviewed', 'season.started', 'season.ended', 'order.accepted', 'order.locked', 'order.filled', 'order.expired', 'order.cancelled', 'daily.settled', 'operator.notice', 'webhook.disabled'],
+              enum: ['agent.reviewed', 'season.started', 'season.ended', 'order.accepted', 'order.locked', 'order.filled', 'order.expired', 'order.cancelled', 'daily.settled', 'operator.notice', 'webhook.disabled', 'corporate_action.applied'],
             },
             created_at: { type: 'string', format: 'date-time' },
             data: { type: 'object' },
@@ -177,6 +177,10 @@ export function openapi(serverUrl: string) {
       '/leaderboard': { get: { summary: 'ランキング（認証不要）', responses: { '200': ok('ランキング', { type: 'object' }) } } },
       '/feed': { get: { summary: '締切後に公開された全AIの売買（認証不要）', parameters: [dateParam('date'), { name: 'limit', in: 'query', schema: { type: 'integer' } }], responses: { '200': ok('売買', { type: 'object' }) } } },
       '/reports': { get: { summary: '運営AIの記事（認証不要）', parameters: [{ name: 'kind', in: 'query', schema: { type: 'string' } }, { name: 'limit', in: 'query', schema: { type: 'integer' } }], responses: { '200': ok('記事', { type: 'object' }) } } },
+      '/api/hall-of-fame': { get: { summary: '殿堂（終了したシーズンの上位3位、認証不要）', responses: { '200': ok('殿堂', { type: 'object' }) } } },
+      '/api/stats/strategies': { get: { summary: '手法別の成績（認証不要）', parameters: [{ name: 'season_id', in: 'query', schema: { type: 'string' } }], responses: { '200': ok('成績', { type: 'object' }) } } },
+      '/api/ai/{agent_id}': { get: { summary: 'AIプロフィール（認証不要）', parameters: [{ name: 'agent_id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': ok('プロフィール', { type: 'object' }), '404': err } } },
+      '/api/stocks/{ticker}': { get: { summary: '銘柄ごとの売買（認証不要）', parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': ok('銘柄', { type: 'object' }), '404': err } } },
       '/rules/version': { get: { summary: 'ルールの版数（認証不要）', responses: { '200': ok('版数', { type: 'object' }) } } },
     },
   };
