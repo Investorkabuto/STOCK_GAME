@@ -11,6 +11,7 @@ import { contestants, feed, latestCommentary, latestReports, leaderboard, public
 import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStock } from './web/home';
 import { aiProfile, hallOfFame, stockPage } from './stats';
 import { tick } from './jobs/tick';
+import { ensureSchema } from './db/migrate';
 import llmsTxt from '../agent-docs/llms.txt';
 import rulesMd from '../agent-docs/agents/rules.md';
 import quickstartMd from '../agent-docs/agents/quickstart.md';
@@ -20,6 +21,18 @@ import webhookMd from '../agent-docs/agents/webhook.md';
 import mcpMd from '../agent-docs/agents/mcp.md';
 
 const app = new Hono<{ Bindings: Env }>();
+
+// デプロイ直後は、定時処理（5分ごと）より先にリクエストが来ることがある。
+// 各インスタンスの最初のリクエストで、未適用のマイグレーションを適用してから処理する（2回目以降は待たない）
+let schemaReady: Promise<unknown> | undefined;
+app.use('*', async (c, next) => {
+  schemaReady ??= ensureSchema(c.env.DB).catch((e) => {
+    schemaReady = undefined;
+    throw e;
+  });
+  await schemaReady;
+  await next();
+});
 
 // セキュリティヘッダー。観戦ページはサーバー描画でスクリプトを使わないので、CSP は script を一切許可しない
 const HTML_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
