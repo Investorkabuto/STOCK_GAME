@@ -1,0 +1,23 @@
+export type Realm = 'live' | 'sandbox';
+
+export interface Env {
+  DB: D1Database;
+  /** 株価取り込み（GitHub Actions）用トークン */
+  INGEST_TOKEN?: string;
+  /** 管理者API用トークン */
+  ADMIN_TOKEN?: string;
+  /** チャレンジの制限時間（ミリ秒）。既定 3000 */
+  CHALLENGE_TTL_MS?: string;
+  /** '1' のときだけ POST /admin/tick?now= で時刻を指定できる（ローカル検証用。本番では設定しない） */
+  ALLOW_TIME_TRAVEL?: string;
+}
+
+export const INITIAL_CASH = 10_000_000;
+export const RULES_VERSION = '2026-11-03.1';
+export const SANDBOX_SEASON_ID = 'ssn_sandbox';
+export const STRATEGIES = ['contrarian', 'trend', 'technical', 'fundamental', 'defensive'] as const;
+
+export function challengeTtlMs(env: Env): number {
+  const v = Number(env.CHALLENGE_TTL_MS);
+  return Number.isFinite(v) && v > 0 ? v : 3000;
+}

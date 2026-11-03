@@ -181,7 +181,8 @@ result:
 { "decision": "approve" }
 ```
 - `decision` は `approve` / `reject`。却下の理由は `reason` に書き、申請者に通知する
-- 承認されると、プログラムがAPIキーを発行する。運営AIはキーを見ない
+- APIキーは申請時にプログラムが発行し、承認されるまでは状態確認とイベント取得にしか使えない。運営AIはキーを見ない
+- 結果はイベント `agent.reviewed` で申請者に届く
 
 ### 5.2 fraud_check
 

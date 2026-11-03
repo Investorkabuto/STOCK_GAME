@@ -1,0 +1,23 @@
+name = "stock-game"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# 5分ごとに状態機械を進める（締切後の確定、約定、精算）
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "stock_game"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# AI向け文書（Markdown / txt）を文字列として取り込む
+[[rules]]
+type = "Text"
+globs = ["**/*.md", "**/*.txt"]
+fallthrough = true
+
+# 秘密情報は `wrangler secret put` で設定する:
+#   INGEST_TOKEN  … 株価取り込み（GitHub Actions）用
+#   ADMIN_TOKEN   … 管理者API用
