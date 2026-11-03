@@ -1,10 +1,11 @@
 // セッション（取引日 × 寄付き／引け）の約定と精算。
 // 1セッション分の書き込みは D1 の batch で一括実行する（途中で失敗すれば全体が取り消される）。
-import type { Realm } from '../env';
+import { INITIAL_CASH, type Realm } from '../env';
 import { eventStatement, lastCloses, loadAccount, saveAccountStatements, type OrderRow } from '../db/repo';
 import {
   marketValue,
-  rankByTotal,
+  rankByReturn,
+  returnPct,
   settleSession,
   type AccountState,
   type OrderResult,
@@ -140,12 +141,12 @@ async function snapshotStatements(db: D1Database, tradeDate: string, updated: Ma
   const accounts = (
     await db
       .prepare(
-        `SELECT a.id, a.agent_id, a.season_id, g.status AS agent_status FROM accounts a
+        `SELECT a.id, a.agent_id, a.season_id, COALESCE(a.start_total, ${INITIAL_CASH}) AS start_total, g.status AS agent_status FROM accounts a
          JOIN seasons s ON s.id = a.season_id JOIN agents g ON g.id = a.agent_id
          WHERE s.realm = 'live' AND s.status = 'running' AND s.starts_on <= ? AND s.ends_on >= ?`,
       )
       .bind(tradeDate, tradeDate)
-      .all<{ id: number; agent_id: string; season_id: string; agent_status: string }>()
+      .all<{ id: number; agent_id: string; season_id: string; start_total: number; agent_status: string }>()
   ).results;
 
   const states = new Map<number, AccountState>();
@@ -158,14 +159,18 @@ async function snapshotStatements(db: D1Database, tradeDate: string, updated: Ma
     const mv = marketValue(s.holdings, (t) => closes.get(t));
     return { ...a, cash: s.cash, market_value: mv, total: s.cash + mv };
   });
-  const ranked = new Map(rankByTotal(rows.filter((r) => r.agent_status !== 'disqualified')).map((r) => [r.id, r.rank]));
+  // 順位は大会（シーズン）ごとに、月間リターンで付ける。参加中（active）のAIだけを順位に入れる
+  const ranked = new Map<number, number>();
+  for (const sid of new Set(rows.map((r) => r.season_id))) {
+    for (const r of rankByReturn(rows.filter((x) => x.season_id === sid && x.agent_status === 'active'))) ranked.set(r.id, r.rank);
+  }
 
   const stmts: D1PreparedStatement[] = [];
   for (const r of rows) {
     const rank = ranked.get(r.id) ?? 0;
     stmts.push(
       db.prepare('INSERT OR REPLACE INTO daily_snapshots (account_id, trade_date, cash, market_value, total, rank) VALUES (?, ?, ?, ?, ?, ?)').bind(r.id, tradeDate, r.cash, r.market_value, r.total, rank),
-      eventStatement(db, r.agent_id, 'daily.settled', { trade_date: tradeDate, season_id: r.season_id, cash: r.cash, market_value: r.market_value, total: r.total, rank }, nowMs),
+      eventStatement(db, r.agent_id, 'daily.settled', { trade_date: tradeDate, season_id: r.season_id, cash: r.cash, market_value: r.market_value, total: r.total, month_start_total: r.start_total, month_return_pct: returnPct(r.total, r.start_total), total_return_pct: returnPct(r.total, INITIAL_CASH), rank }, nowMs),
     );
   }
   return stmts;

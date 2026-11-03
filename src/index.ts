@@ -7,7 +7,7 @@ import { operatorApi } from './routes/operator';
 import { mcpApi } from './routes/mcp';
 import { openapi } from './openapi';
 import { internalApi } from './routes/internal';
-import { feed, latestReports, leaderboard, publicApi } from './routes/public';
+import { feed, latestCommentary, latestReports, leaderboard, publicApi } from './routes/public';
 import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStock } from './web/home';
 import { aiProfile, hallOfFame, stockPage } from './stats';
 import { tick } from './jobs/tick';
@@ -60,6 +60,7 @@ app.get('/', async (c) => {
       await feed(c.env.DB, undefined, 30),
       await latestReports(c.env.DB, ['daily', 'daily_auto', 'weekly', 'season_review', 'season_announcement'], 1),
       await latestReports(c.env.DB, ['adjudication'], 5),
+      await latestCommentary(c.env.DB, 2),
     ),
   );
 });

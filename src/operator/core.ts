@@ -1,13 +1,13 @@
 // 運営タスクのキュー、審査・裁定・異議・記事の反映。
 // 運営AI（もち）と管理者（ユーザー）の両方の操作がここを通るので、監査ログもここで残す。
-import { INITIAL_CASH } from '../env';
+import { INITIAL_CASH, isTestSeason } from '../env';
 import { eventStatement, type SeasonRow } from '../db/repo';
 import { newId } from '../lib/crypto';
 import { ApiError } from '../lib/http';
 import { jstIso, registrationDeadlineMs } from '../lib/time';
 
 export type Actor = 'operator' | 'admin' | 'system';
-export type TaskType = 'registration_review' | 'fraud_check' | 'report_daily' | 'report_weekly' | 'season_review' | 'appeal_review';
+export type TaskType = 'registration_review' | 'fraud_check' | 'report_daily' | 'report_weekly' | 'season_review' | 'appeal_review' | 'commentary';
 
 const HOUR = 60 * 60 * 1000;
 export const TASK_DUE_MS: Record<TaskType, number> = {
@@ -17,9 +17,14 @@ export const TASK_DUE_MS: Record<TaskType, number> = {
   report_weekly: 48 * HOUR,
   season_review: 72 * HOUR,
   appeal_review: 72 * HOUR,
+  commentary: 2 * HOUR,
 };
 /** 失効するのは日報だけ（operator-api.md 5章） */
 export const REPORT_DAILY_EXPIRES_MS = 72 * HOUR;
+/** 実況は鮮度が大事なので、2時間で失効させてプログラムの定型文に切り替える */
+export const COMMENTARY_EXPIRES_MS = 2 * HOUR;
+export const COMMENTARY_MAX_LINES = 10;
+export const COMMENTARY_MAX_CHARS = 80;
 
 export interface TaskRow {
   id: string;
@@ -98,10 +103,19 @@ export async function reviewAgentStatements(
     eventStatement(db, agentId, 'agent.reviewed', { decision, reason }, nowMs),
     auditStatement(db, actor, `registration.${decision}`, agentId, { reason }, nowMs),
   ];
+  // 管理者が先に審査したときは、運営AIの審査タスクも閉じる（滞留通知を出さないため）
+  if (actor !== 'operator') {
+    stmts.push(
+      db
+        .prepare("UPDATE operator_tasks SET status = 'done', done_at = ?, result_json = ?, result_reason = 'decided by admin' WHERE type = 'registration_review' AND subject_id = ? AND status = 'pending'")
+        .bind(jstIso(nowMs), JSON.stringify({ decision, decided_by: actor }), agentId),
+    );
+  }
   if (decision === 'approve') {
     const seasons = (await db.prepare("SELECT * FROM seasons WHERE realm = 'live' AND status = 'running'").all<SeasonRow>()).results;
     for (const s of seasons) {
-      if (agent.created_at <= jstIso(registrationDeadlineMs(s.starts_on))) {
+      // テスト運用の月は、途中からでも参加できる
+      if (isTestSeason(s.id) || agent.created_at <= jstIso(registrationDeadlineMs(s.starts_on))) {
         stmts.push(
           db.prepare('INSERT OR IGNORE INTO accounts (season_id, agent_id, cash, created_at) VALUES (?, ?, ?, ?)').bind(s.id, agentId, INITIAL_CASH, jstIso(nowMs)),
           eventStatement(db, agentId, 'season.started', { season_id: s.id, starts_on: s.starts_on, ends_on: s.ends_on, cash: INITIAL_CASH }, nowMs),
@@ -302,6 +316,16 @@ export async function applyTaskResult(db: D1Database, task: TaskRow, result: unk
       e.add(result.decision !== 'reject' || isStr(reason, 2000), '却下するときは reason（申請者に通知される）が必要');
       if (e.list.length) break;
       const agent = await db.prepare('SELECT status FROM agents WHERE id = ?').bind(task.subject_id).first<{ status: string }>();
+      // テスト運用中の登録は、すでに参加している。承認なら記録だけ、却下なら参加を止める
+      if (payload.post_hoc === true && agent?.status === 'active') {
+        if (result.decision === 'approve') return [auditStatement(db, 'operator', 'registration.confirmed', task.subject_id, {}, nowMs)];
+        return [
+          db.prepare("UPDATE agents SET status = 'rejected', review_reason = ?, reviewed_at = ? WHERE id = ?").bind(reason, now, task.subject_id),
+          db.prepare("UPDATE orders SET status = 'cancelled', updated_at = ? WHERE agent_id = ? AND status = 'accepted'").bind(now, task.subject_id),
+          eventStatement(db, task.subject_id, 'agent.reviewed', { decision: 'reject', reason, post_hoc: true }, nowMs),
+          auditStatement(db, 'operator', 'registration.reject', task.subject_id, { reason, post_hoc: true }, nowMs),
+        ];
+      }
       // 管理者が先に手動で審査していた場合は、結果だけ記録して反映はしない
       if (agent?.status !== 'pending') return [auditStatement(db, 'operator', 'registration.skipped', task.subject_id, { already: agent?.status }, nowMs)];
       return reviewAgentStatements(db, task.subject_id, result.decision as 'approve' | 'reject', reason, 'operator', nowMs);
@@ -333,6 +357,18 @@ export async function applyTaskResult(db: D1Database, task: TaskRow, result: unk
       }
       if (e.list.length) break;
       return stmts;
+    }
+
+    case 'commentary': {
+      const lines = result.lines;
+      e.add(Array.isArray(lines) && lines.length >= 1 && lines.length <= COMMENTARY_MAX_LINES, `result.lines は1〜${COMMENTARY_MAX_LINES}行の配列`);
+      if (Array.isArray(lines)) lines.forEach((l, i) => e.add(isStr(l, COMMENTARY_MAX_CHARS) && !/[\r\n]/.test(l), `result.lines[${i}] は改行を含まない1〜${COMMENTARY_MAX_CHARS}文字`));
+      if (e.list.length) break;
+      return [
+        db
+          .prepare("INSERT INTO commentary (trade_date, timing, lines_json, author, source_task_id, created_at) VALUES (?, ?, ?, 'operator', ?, ?)")
+          .bind(payload.trade_date, payload.timing, JSON.stringify((lines as string[]).map((l) => l.trim())), task.id, now),
+      ];
     }
 
     case 'report_daily':

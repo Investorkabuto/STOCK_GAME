@@ -1,6 +1,7 @@
 // 誰でも見られる情報（観戦者・参加AI共通）
 import { Hono } from 'hono';
-import { RULES_VERSION, type Env } from '../env';
+import { INITIAL_CASH, isTestSeason, RULES_VERSION, type Env } from '../env';
+import { returnPct } from '../lib/engine';
 import { holidaySet, seasonForDate } from '../db/repo';
 import { addDays, isBusinessDay, jstDate } from '../lib/time';
 import { enforceRateLimit } from '../lib/http';
@@ -9,35 +10,67 @@ import { aiProfile, hallOfFame, stockPage } from '../stats';
 export const publicApi = new Hono<{ Bindings: Env }>();
 
 // 公開のJSON（ランキング・フィードなど）も、接続元ごとに数を制限する
-for (const path of ['/leaderboard', '/feed', '/calendar', '/tickers', '/reports', '/reports/*', '/rules/version', '/api/*']) {
+for (const path of ['/leaderboard', '/commentary', '/feed', '/calendar', '/tickers', '/reports', '/reports/*', '/rules/version', '/api/*']) {
   publicApi.use(path, async (c, next) => {
     await enforceRateLimit(c);
     await next();
   });
 }
 
-export async function leaderboard(db: D1Database, nowMs: number) {
+export interface BoardRow {
+  rank: number;
+  display_name: string;
+  owner_name: string | null;
+  agent_id: string;
+  total: number;
+  /** 月間リターン（その月の開始時の総資産に対する増減率）。順位はこれで決まる */
+  return_pct: number;
+  month_return_pct: number;
+  /** 通算リターン（最初の1,000万円に対する増減率） */
+  total_return_pct: number;
+  /** 前月から引き継いで参加しているか */
+  continuing: boolean;
+}
+
+export async function leaderboard(db: D1Database, nowMs: number): Promise<{ season_id: string | null; is_test: boolean; as_of: string | null; rows: BoardRow[] }> {
   const season = await seasonForDate(db, 'live', jstDate(nowMs));
-  if (!season) return { season_id: null, as_of: null, rows: [] as { rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number; return_pct: number }[] };
+  if (!season) return { season_id: null, is_test: false, as_of: null, rows: [] };
+  const isTest = isTestSeason(season.id);
   const asOf = await db
     .prepare('SELECT MAX(d.trade_date) AS d FROM daily_snapshots d JOIN accounts a ON a.id = d.account_id WHERE a.season_id = ?')
     .bind(season.id)
     .first<{ d: string | null }>();
-  if (!asOf?.d) return { season_id: season.id, as_of: null, rows: [] };
+  if (!asOf?.d) return { season_id: season.id, is_test: isTest, as_of: null, rows: [] };
   const r = await db
     .prepare(
-      `SELECT d.rank, g.display_name, g.owner_name, g.id AS agent_id, d.total FROM daily_snapshots d
+      `SELECT d.rank, g.display_name, g.owner_name, g.id AS agent_id, d.total, COALESCE(a.start_total, ${INITIAL_CASH}) AS start_total, a.carried_from
+       FROM daily_snapshots d
        JOIN accounts a ON a.id = d.account_id JOIN agents g ON g.id = a.agent_id
        WHERE a.season_id = ? AND d.trade_date = ? AND d.rank > 0 ORDER BY d.rank`,
     )
     .bind(season.id, asOf.d)
-    .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number }>();
+    .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number; start_total: number; carried_from: number | null }>();
   return {
     season_id: season.id,
+    is_test: isTest,
     as_of: asOf.d,
-    rows: r.results.map((x) => ({ ...x, return_pct: Math.round(((x.total - 10_000_000) / 10_000_000) * 10000) / 100 })),
+    rows: r.results.map(({ start_total, carried_from, ...x }) => {
+      const month = returnPct(x.total, start_total);
+      return { ...x, return_pct: month, month_return_pct: month, total_return_pct: returnPct(x.total, INITIAL_CASH), continuing: carried_from != null };
+    }),
   };
 }
+
+/** 電光掲示板に流す実況（新しい順） */
+export async function latestCommentary(db: D1Database, limit: number) {
+  const r = await db
+    .prepare('SELECT trade_date, timing, lines_json, author, created_at FROM commentary ORDER BY id DESC LIMIT ?')
+    .bind(limit)
+    .all<{ trade_date: string; timing: string; lines_json: string; author: string; created_at: string }>();
+  return r.results.map(({ lines_json, ...c }) => ({ ...c, lines: JSON.parse(lines_json) as string[] }));
+}
+
+publicApi.get('/commentary', async (c) => c.json({ commentary: await latestCommentary(c.env.DB, Math.min(Number(c.req.query('limit') ?? 10) || 10, 50)) }));
 
 publicApi.get('/leaderboard', async (c) => c.json(await leaderboard(c.env.DB, Date.now())));
 

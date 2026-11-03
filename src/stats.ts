@@ -1,26 +1,26 @@
-// 観戦用の集計: 殿堂、手法別の成績、AIプロフィール、銘柄ページ
-import { INITIAL_CASH } from './env';
+// 観戦用の集計: 殿堂、AIプロフィール、銘柄ページ
+import { INITIAL_CASH, isTestSeason } from './env';
 import { lastCloses, seasonForDate } from './db/repo';
 import { jstDate } from './lib/time';
 
 const pct = (x: number) => Math.round(x * 10000) / 100;
 
-/** 終了したシーズンの上位3位 */
+/** 終了した大会（テスト運用を除く）の上位3位。順位は月間リターン */
 export async function hallOfFame(db: D1Database) {
   const seasons = (await db.prepare("SELECT id, starts_on, ends_on FROM seasons WHERE realm = 'live' AND status = 'finished' ORDER BY starts_on DESC").all<{ id: string; starts_on: string; ends_on: string }>()).results;
   const out = [];
-  for (const s of seasons) {
+  for (const s of seasons.filter((x) => !isTestSeason(x.id))) {
     const top = (
       await db
         .prepare(
-          `SELECT d.rank, g.display_name, g.owner_name, g.id AS agent_id, d.total FROM accounts a JOIN agents g ON g.id = a.agent_id
+          `SELECT d.rank, g.display_name, g.owner_name, g.id AS agent_id, d.total, COALESCE(a.start_total, ${INITIAL_CASH}) AS start_total FROM accounts a JOIN agents g ON g.id = a.agent_id
            JOIN daily_snapshots d ON d.account_id = a.id AND d.trade_date = (SELECT MAX(trade_date) FROM daily_snapshots WHERE account_id = a.id)
            WHERE a.season_id = ? AND d.rank BETWEEN 1 AND 3 ORDER BY d.rank`,
         )
         .bind(s.id)
-        .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number }>()
+        .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number; start_total: number }>()
     ).results;
-    out.push({ season_id: s.id, starts_on: s.starts_on, ends_on: s.ends_on, top: top.map((t) => ({ ...t, return_pct: pct((t.total - INITIAL_CASH) / INITIAL_CASH) })) });
+    out.push({ season_id: s.id, starts_on: s.starts_on, ends_on: s.ends_on, top: top.map(({ start_total, ...t }) => ({ ...t, return_pct: pct((t.total - start_total) / start_total) })) });
   }
   return out;
 }
@@ -44,12 +44,12 @@ export async function aiProfile(db: D1Database, agentId: string) {
   const seasons = (
     await db
       .prepare(
-        `SELECT s.id AS season_id, s.status AS season_status, a.id AS account_id, d.total, d.rank, d.trade_date FROM accounts a JOIN seasons s ON s.id = a.season_id
+        `SELECT s.id AS season_id, s.status AS season_status, a.id AS account_id, COALESCE(a.start_total, ${INITIAL_CASH}) AS start_total, d.total, d.rank, d.trade_date FROM accounts a JOIN seasons s ON s.id = a.season_id
          LEFT JOIN daily_snapshots d ON d.account_id = a.id AND d.trade_date = (SELECT MAX(trade_date) FROM daily_snapshots WHERE account_id = a.id)
          WHERE a.agent_id = ? AND s.realm = 'live' ORDER BY s.starts_on DESC`,
       )
       .bind(agentId)
-      .all<{ season_id: string; season_status: string; account_id: number; total: number | null; rank: number | null; trade_date: string | null }>()
+      .all<{ season_id: string; season_status: string; account_id: number; start_total: number; total: number | null; rank: number | null; trade_date: string | null }>()
   ).results;
   const current = seasons.find((s) => s.season_status === 'running');
   const holdings = current
@@ -62,7 +62,12 @@ export async function aiProfile(db: D1Database, agentId: string) {
   const adjudications = (await db.prepare("SELECT level, status, reason, published_at FROM adjudications WHERE agent_id = ? AND status IN ('published', 'enforced') ORDER BY published_at DESC").bind(agentId).all()).results;
   return {
     agent: { ...agent, created_at: agent.created_at.slice(0, 10) },
-    seasons: seasons.map(({ account_id: _a, ...s }) => ({ ...s, return_pct: s.total == null ? null : pct((s.total - INITIAL_CASH) / INITIAL_CASH) })),
+    seasons: seasons.map(({ account_id: _a, start_total, ...s }) => ({
+      ...s,
+      is_test: isTestSeason(s.season_id),
+      return_pct: s.total == null ? null : pct((s.total - start_total) / start_total),
+      total_return_pct: s.total == null || isTestSeason(s.season_id) ? null : pct((s.total - INITIAL_CASH) / INITIAL_CASH),
+    })),
     holdings,
     strategy_mix: strategyMix,
     recent_trades: trades.map((t) => ({ ...t, strategy: JSON.parse(t.strategy) as string[] })),

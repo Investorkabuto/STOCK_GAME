@@ -153,3 +153,23 @@ export function rankByTotal<T extends { total: number }>(rows: T[]): (T & { rank
     return { ...r, rank };
   });
 }
+
+/** 月間リターン（その月の開始時の総資産に対する増減率）の降順で順位を付ける（同率は同順位） */
+export function rankByReturn<T extends { total: number; start_total: number }>(rows: T[]): (T & { rank: number })[] {
+  const ret = (r: T) => r.total / r.start_total;
+  const sorted = [...rows].sort((a, b) => ret(b) - ret(a));
+  let prev: number | null = null;
+  let prevRank = 0;
+  return sorted.map((r, i) => {
+    const v = ret(r);
+    const rank = prev !== null && Math.abs(v - prev) < 1e-12 ? prevRank : i + 1;
+    prev = v;
+    prevRank = rank;
+    return { ...r, rank };
+  });
+}
+
+/** 増減率（%、小数第2位まで） */
+export function returnPct(total: number, base: number): number {
+  return Math.round(((total - base) / base) * 10000) / 100 || 0; // -0 を 0 にする
+}

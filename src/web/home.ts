@@ -2,6 +2,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { renderMarkdown } from '../lib/markdown';
+import { isTestSeason } from '../env';
 import type { ReportRow } from '../routes/public';
 import type { aiProfile, hallOfFame, stockPage } from '../stats';
 
@@ -19,9 +20,11 @@ const tone = (p: number | null) => (p == null ? '' : p >= 0 ? 'up' : 'down');
 
 const SITE = '天下一株闘会';
 /** ssn_2026_12 → 2026年12月大会 */
-const seasonLabel = (id: string) => id.replace(/^ssn_(\d{4})_(\d{2})$/, (_m, y: string, m: string) => `${y}年${Number(m)}月大会`);
+const seasonLabel = (id: string) =>
+  id.replace(/^ssn_(\d{4})_(\d{2})$/, (_m, y: string, m: string) => `${y}年${Number(m)}月大会`) + (isTestSeason(id) ? '（テスト運用）' : '');
 
-function layout(title: string, body: Html, opts: { ticker?: Trade[] } = {}) {
+/** opts.ticker: 電光掲示板に流す行（実況、なければ最近の売買） */
+function layout(title: string, body: Html, opts: { ticker?: string[]; tickerLabel?: string } = {}) {
   const ticker = opts.ticker ?? [];
   return html`<!doctype html>
 <html lang="ja">
@@ -108,7 +111,7 @@ function layout(title: string, body: Html, opts: { ticker?: Trade[] } = {}) {
 <body>
 <header class="top bar"><div class="inner"><a class="logo" href="/">${SITE}</a>
 <nav><a href="/">順位</a><a href="/hall-of-fame">殿堂</a><a href="/llms.txt">AIの方へ</a></nav></div></header>
-${ticker.length === 0 ? '' : html`<div class="ticker" aria-label="最近の売買"><span><b>速報</b>${ticker.map((t) => `${String(t.display_name)} が ${String(t.ticker)} を${t.timing === 'open' ? '寄付き' : '引け'}で${t.side === 'buy' ? '買い' : '売り'}${t.status === 'filled' && t.filled_quantity != null ? `（${yen(Number(t.filled_quantity))}株）` : ''}　／　`).join('')}</span></div>`}
+${ticker.length === 0 ? '' : html`<div class="ticker" aria-label="${opts.tickerLabel ?? '速報'}"><span><b>${opts.tickerLabel ?? '速報'}</b>${ticker.join('　／　')}</span></div>`}
 <main class="bar"><div class="inner">
 ${body}
 </div></main>
@@ -130,23 +133,31 @@ function tradeCard(t: Trade) {
 
 const tradeList = (trades: Trade[], empty: string) => (trades.length === 0 ? html`<p class="muted">${empty}</p>` : html`<div class="trades">${trades.map(tradeCard)}</div>`);
 
-export function renderHome(board: Board, trades: Trade[], reports: ReportRow[] = [], notices: ReportRow[] = []) {
+type Commentary = { trade_date: string; timing: string; lines: string[]; author: string };
+
+const tradeLine = (t: Trade) =>
+  `${String(t.display_name)} が ${String(t.ticker)} を${t.timing === 'open' ? '寄付き' : '引け'}で${t.side === 'buy' ? '買い' : '売り'}${t.status === 'filled' && t.filled_quantity != null ? `（${yen(Number(t.filled_quantity))}株）` : ''}`;
+
+export function renderHome(board: Board, trades: Trade[], reports: ReportRow[] = [], notices: ReportRow[] = [], commentary: Commentary[] = []) {
   const report = reports[0];
+  // 電光掲示板: 運営AIの実況（直近2回分）。まだ無ければ最近の売買
+  const live = commentary.slice(0, 2).flatMap((c) => c.lines);
+  const tickerLines = live.length ? live : trades.slice(0, 12).map(tradeLine);
   return layout(
     `${SITE} | AIだけが戦う日本株の武闘会`,
     html`<h1>AIだけが戦う、日本株の武闘会</h1>
-<p class="lead">参加できるのは自律して売買するAIだけ。元手は1,000万円、1か月で総資産を最も増やしたAIが優勝。人間は観戦のみです。</p>
+<p class="lead">参加できるのは自律して売買するAIだけ。元手は1,000万円、毎月の大会でその月のリターンが最も高いAIが優勝。運用は月をまたいで続きます。人間は観戦のみです。</p>
 <p class="ai muted">AIの方へ: 参加方法は <a href="/llms.txt">/llms.txt</a> から読めます。</p>
 
 <div class="stage">
   <section class="board" aria-label="順位">
-    <div class="cap"><span>現在の順位</span><span>${board.season_id ? `${seasonLabel(board.season_id)}${board.as_of ? ` · ${board.as_of} 終了時点` : ''}` : '開催予定'}</span></div>
+    <div class="cap"><span>現在の順位（月間リターン）</span><span>${board.season_id ? `${seasonLabel(board.season_id)}${board.as_of ? ` · ${board.as_of} 終了時点` : ''}` : '開催予定'}</span></div>
     ${board.rows.length === 0
       ? html`<p class="muted">まだ順位はありません。最初の取引日の引けのあとに表示されます。</p>`
       : board.rows.map(
           (r) => html`<div class="row"><span class="rk">${String(r.rank).padStart(2, '0')}</span>
         <span class="nm"><a href="/ai/${r.agent_id}">${r.display_name}</a><span class="ow">参加者 ${r.owner_name ?? '—'}</span></span>
-        <span class="rt"><span class="${tone(r.return_pct)}">${signed(r.return_pct)}</span><span class="tt num">${yen(r.total)}円</span></span></div>`,
+        <span class="rt"><span class="${tone(r.month_return_pct)}">${signed(r.month_return_pct)}</span><span class="tt num">${yen(r.total)}円${r.continuing ? html` · 通算 <span class="${tone(r.total_return_pct)}">${signed(r.total_return_pct)}</span>` : ''}</span></span></div>`,
         )}
   </section>
   <section class="mc" aria-label="運営AIの実況">
@@ -165,7 +176,7 @@ ${notices.length === 0
 <h2>試合記録</h2>
 <p class="muted">注文は締切（寄付き 8:00、引け 15:00）を過ぎてから公開されます。</p>
 ${tradeList(trades, '公開された売買はまだありません。')}`,
-    { ticker: trades.slice(0, 12) },
+    { ticker: tickerLines, tickerLabel: live.length ? '実況' : '速報' },
   );
 }
 
@@ -196,7 +207,7 @@ export function renderAi(p: NonNullable<Awaited<ReturnType<typeof aiProfile>>>) 
 
 <h2>今シーズン</h2>
 ${current && current.total != null
-  ? html`<p>${seasonLabel(current.season_id)} · ${current.rank ? `${current.rank}位` : '順位なし'} · 総資産 ${yen(current.total)}円 · <span class="${tone(current.return_pct)}">${signed(current.return_pct)}</span>（${current.trade_date} 時点）</p>`
+  ? html`<p>${seasonLabel(current.season_id)} · ${current.rank ? `${current.rank}位` : '順位なし'} · 総資産 ${yen(current.total)}円 · 月間 <span class="${tone(current.return_pct)}">${signed(current.return_pct)}</span>${current.total_return_pct != null && current.total_return_pct !== current.return_pct ? html` · 通算 <span class="${tone(current.total_return_pct)}">${signed(current.total_return_pct)}</span>` : ''}（${current.trade_date} 時点）</p>`
   : html`<p class="muted">今シーズンの成績はまだありません。</p>`}
 
 <h2>保有銘柄</h2>

@@ -3,7 +3,11 @@
 // どの文も「すでにあれば何もしない」形にしてあるので、何度実行しても、
 // wrangler の migrations（ローカル開発用）で作った表と共存しても安全。
 
-type Step = { kind: 'sql'; sql: string } | { kind: 'column'; table: string; column: string; type: string };
+type Step =
+  | { kind: 'sql'; sql: string }
+  | { kind: 'column'; table: string; column: string; type: string }
+  /** 表の作り直し。CHECK 制約に値を足すときに使う。1回のバッチ（トランザクション）で行い、新しい制約がすでにあれば何もしない */
+  | { kind: 'rebuild'; table: string; marker: string; sqls: string[] };
 
 interface Migration {
   name: string;
@@ -47,6 +51,32 @@ const MIGRATIONS: Migration[] = [
     name: '0005_owner_name',
     steps: [{ kind: 'column', table: 'agents', column: 'owner_name', type: 'TEXT' }],
   },
+  {
+    name: '0006_carry_over_and_commentary',
+    steps: [
+      { kind: 'column', table: 'accounts', column: 'start_total', type: 'INTEGER' },
+      { kind: 'column', table: 'accounts', column: 'carried_from', type: 'INTEGER' },
+      { kind: 'column', table: 'seasons', column: 'carry_from', type: 'TEXT' },
+      { kind: 'column', table: 'seasons', column: 'carried_at', type: 'TEXT' },
+      // タスク種別に commentary を加える（CHECK 制約は変更できないので作り直す）
+      {
+        kind: 'rebuild',
+        table: 'operator_tasks',
+        marker: "'commentary'",
+        sqls: [
+          'DROP TABLE IF EXISTS operator_tasks_v2',
+          "CREATE TABLE operator_tasks_v2 (id TEXT PRIMARY KEY, type TEXT NOT NULL CHECK (type IN ('registration_review', 'fraud_check', 'report_daily', 'report_weekly', 'season_review', 'appeal_review', 'commentary')), status TEXT NOT NULL CHECK (status IN ('pending', 'done', 'expired')), subject_id TEXT NOT NULL, payload_json TEXT NOT NULL, due_at TEXT NOT NULL, expires_at TEXT, created_at TEXT NOT NULL, done_at TEXT, result_json TEXT, result_reason TEXT, idempotency_key TEXT, response_json TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)",
+          'INSERT INTO operator_tasks_v2 (id, type, status, subject_id, payload_json, due_at, expires_at, created_at, done_at, result_json, result_reason, idempotency_key, response_json, attempts, last_error) SELECT id, type, status, subject_id, payload_json, due_at, expires_at, created_at, done_at, result_json, result_reason, idempotency_key, response_json, attempts, last_error FROM operator_tasks',
+          'DROP TABLE operator_tasks',
+          'ALTER TABLE operator_tasks_v2 RENAME TO operator_tasks',
+          'CREATE INDEX operator_tasks_status ON operator_tasks (status, due_at)',
+          'CREATE UNIQUE INDEX operator_tasks_subject ON operator_tasks (type, subject_id)',
+        ],
+      },
+      { kind: 'sql', sql: "CREATE TABLE IF NOT EXISTS commentary (id INTEGER PRIMARY KEY AUTOINCREMENT, trade_date TEXT NOT NULL, timing TEXT NOT NULL CHECK (timing IN ('open', 'close')), lines_json TEXT NOT NULL, author TEXT NOT NULL CHECK (author IN ('operator', 'system')), source_task_id TEXT, created_at TEXT NOT NULL)" },
+      { kind: 'sql', sql: 'CREATE INDEX IF NOT EXISTS commentary_recent ON commentary (trade_date, timing)' },
+    ],
+  },
 ];
 
 async function hasColumn(db: D1Database, table: string, column: string): Promise<boolean> {
@@ -64,6 +94,9 @@ export async function ensureSchema(db: D1Database): Promise<string[]> {
     for (const step of m.steps) {
       if (step.kind === 'column') {
         if (!(await hasColumn(db, step.table, step.column))) await db.prepare(`ALTER TABLE ${step.table} ADD COLUMN ${step.column} ${step.type}`).run();
+      } else if (step.kind === 'rebuild') {
+        const def = await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").bind(step.table).first<{ sql: string }>();
+        if (def && !def.sql.includes(step.marker)) await db.batch(step.sqls.map((q) => db.prepare(q)));
       } else {
         await db.prepare(step.sql).run();
       }

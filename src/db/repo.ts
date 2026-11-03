@@ -21,6 +21,9 @@ export interface SeasonRow {
   starts_on: string;
   ends_on: string;
   status: 'scheduled' | 'running' | 'finished';
+  /** 開始時に資金と保有株を引き継ぐ前月のシーズン（なければ全員1,000万円から） */
+  carry_from?: string | null;
+  carried_at?: string | null;
 }
 
 export interface OrderRow {

@@ -3,14 +3,15 @@
 //  1. シーズンの作成・開始・終了
 //  2. 締切を過ぎた注文の確定（locked）
 //  3. 価格がそろったセッションの精算（日付順、寄付き→引け）
-import { INITIAL_CASH, type Env } from '../env';
-import { eventStatement, holidaySet, type SeasonRow } from '../db/repo';
+import { INITIAL_CASH, isTestSeason, type Env } from '../env';
+import { eventStatement, holidaySet, lastCloses, loadAccount, type SeasonRow } from '../db/repo';
+import { marketValue } from '../lib/engine';
 import { addDays, deadlineMs, isBusinessDay, jstDate, jstIso, monthRange, registrationDeadlineMs, type Timing } from '../lib/time';
 import { settleLiveSession } from './settlement';
 import { ensureSchema } from '../db/migrate';
 import { deliverWebhooks } from './webhooks';
 import { applyPendingActions } from './corporate';
-import { checkAlerts, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
+import { checkAlerts, commentaryTask, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
 
 export async function tick(env: Env, nowMs: number): Promise<string[]> {
   const db = env.DB;
@@ -34,9 +35,13 @@ function seasonId(yearMonth: string): string {
 async function ensureSeason(db: D1Database, yearMonth: string, nowMs: number, log: string[]) {
   const id = seasonId(yearMonth);
   const { startsOn, endsOn } = monthRange(yearMonth);
+  // 前月が本番の大会なら、その資金と保有株を引き継ぐ。テスト運用の月からは引き継がない
+  const prevId = seasonId(addDays(startsOn, -1).slice(0, 7));
+  const prev = await db.prepare("SELECT id FROM seasons WHERE id = ? AND realm = 'live'").bind(prevId).first<{ id: string }>();
+  const carryFrom = prev && !isTestSeason(prev.id) ? prev.id : null;
   const r = await db
-    .prepare("INSERT OR IGNORE INTO seasons (id, realm, starts_on, ends_on, status, created_at) VALUES (?, 'live', ?, ?, 'scheduled', ?)")
-    .bind(id, startsOn, endsOn, jstIso(nowMs))
+    .prepare("INSERT OR IGNORE INTO seasons (id, realm, starts_on, ends_on, status, created_at, carry_from) VALUES (?, 'live', ?, ?, 'scheduled', ?, ?)")
+    .bind(id, startsOn, endsOn, jstIso(nowMs), carryFrom)
     .run();
   if (r.meta.changes > 0) log.push(`season created: ${id}`);
 }
@@ -62,11 +67,59 @@ export async function startSeason(db: D1Database, season: SeasonRow, nowMs: numb
   for (const a of agents) {
     stmts.push(
       db.prepare('INSERT OR IGNORE INTO accounts (season_id, agent_id, cash, created_at) VALUES (?, ?, ?, ?)').bind(season.id, a.id, INITIAL_CASH, now),
-      eventStatement(db, a.id, 'season.started', { season_id: season.id, starts_on: season.starts_on, ends_on: season.ends_on, cash: INITIAL_CASH }, nowMs),
+      eventStatement(
+        db,
+        a.id,
+        'season.started',
+        season.carry_from
+          ? { season_id: season.id, starts_on: season.starts_on, ends_on: season.ends_on, carry_over: true, note: '前月の最終精算のあと、前月の資金と保有株をこの大会に引き継ぎます（イベント season.carried_over）。前月に参加していなければ1,000万円から始まります' }
+          : { season_id: season.id, starts_on: season.starts_on, ends_on: season.ends_on, carry_over: false, cash: INITIAL_CASH },
+        nowMs,
+      ),
     );
   }
   await db.batch(stmts);
   return agents.length;
+}
+
+/**
+ * 前月の最終精算のあと、前月の資金と保有株（取得額も）を新しい月の口座へ写す。
+ * 新しい月の開始時の総資産（start_total）を、前月最終日の終値で評価した総資産にする。月間リターンの基準になる
+ */
+export async function carryOver(db: D1Database, prev: SeasonRow, next: SeasonRow, nowMs: number): Promise<number> {
+  const pairs = (
+    await db
+      .prepare('SELECT n.id AS new_id, n.agent_id, p.id AS prev_id FROM accounts n JOIN accounts p ON p.agent_id = n.agent_id AND p.season_id = ? WHERE n.season_id = ?')
+      .bind(prev.id, next.id)
+      .all<{ new_id: number; agent_id: string; prev_id: number }>()
+  ).results;
+  const stmts: D1PreparedStatement[] = [];
+  for (const p of pairs) {
+    const state = await loadAccount(db, p.prev_id);
+    const closes = await lastCloses(db, [...state.holdings.keys()], prev.ends_on);
+    const total = state.cash + marketValue(state.holdings, (t) => closes.get(t));
+    stmts.push(
+      db.prepare('UPDATE accounts SET cash = ?, start_total = ?, carried_from = ? WHERE id = ?').bind(state.cash, total, p.prev_id, p.new_id),
+      db.prepare('DELETE FROM holdings WHERE account_id = ?').bind(p.new_id),
+      db.prepare('INSERT INTO holdings (account_id, ticker, quantity, cost) SELECT ?, ticker, quantity, cost FROM holdings WHERE account_id = ?').bind(p.new_id, p.prev_id),
+      eventStatement(
+        db,
+        p.agent_id,
+        'season.carried_over',
+        {
+          from_season_id: prev.id,
+          season_id: next.id,
+          cash: state.cash,
+          holdings: [...state.holdings].map(([ticker, h]) => ({ ticker, quantity: h.quantity, cost: h.cost })),
+          month_start_total: total,
+        },
+        nowMs,
+      ),
+    );
+  }
+  stmts.push(db.prepare('UPDATE seasons SET carried_at = ? WHERE id = ?').bind(jstIso(nowMs), next.id));
+  await db.batch(stmts);
+  return pairs.length;
 }
 
 async function manageSeasons(db: D1Database, nowMs: number, log: string[]) {
@@ -81,6 +134,26 @@ async function manageSeasons(db: D1Database, nowMs: number, log: string[]) {
   const scheduled = (await db.prepare("SELECT * FROM seasons WHERE realm = 'live' AND status = 'scheduled'").all<SeasonRow>()).results;
   for (const s of scheduled) {
     if (nowMs > registrationDeadlineMs(s.starts_on)) log.push(`season started: ${s.id} (${await startSeason(db, s, nowMs)} agents)`);
+  }
+
+  // テスト運用の月は途中参加できる。参加中（active）の本番AIで口座がまだないものに、1,000万円の口座を作る
+  // （テスト運用の受付前に承認されたAIや、管理者・運営AIが後から承認したAIのため）
+  const running = (await db.prepare("SELECT * FROM seasons WHERE realm = 'live' AND status = 'running' AND ends_on >= ?").bind(today).all<SeasonRow>()).results;
+  for (const s of running.filter((x) => isTestSeason(x.id))) {
+    const missing = (
+      await db
+        .prepare("SELECT id FROM agents WHERE realm = 'live' AND status = 'active' AND id NOT IN (SELECT agent_id FROM accounts WHERE season_id = ?)")
+        .bind(s.id)
+        .all<{ id: string }>()
+    ).results;
+    if (missing.length === 0) continue;
+    await db.batch(
+      missing.flatMap((a) => [
+        db.prepare('INSERT OR IGNORE INTO accounts (season_id, agent_id, cash, created_at) VALUES (?, ?, ?, ?)').bind(s.id, a.id, INITIAL_CASH, jstIso(nowMs)),
+        eventStatement(db, a.id, 'season.started', { season_id: s.id, starts_on: s.starts_on, ends_on: s.ends_on, carry_over: false, cash: INITIAL_CASH }, nowMs),
+      ]),
+    );
+    log.push(`test season ${s.id}: joined ${missing.length} agents`);
   }
 
   // 終了: 最終日を過ぎ、期間内に未精算のセッションが残っていない
@@ -110,6 +183,8 @@ async function manageSeasons(db: D1Database, nowMs: number, log: string[]) {
     ]);
     await seasonReviewTask(db, s, nowMs);
     log.push(`season finished: ${s.id}`);
+    const next = await db.prepare("SELECT * FROM seasons WHERE realm = 'live' AND carry_from = ? AND carried_at IS NULL").bind(s.id).first<SeasonRow>();
+    if (next) log.push(`carried over ${s.id} -> ${next.id}: ${await carryOver(db, s, next, nowMs)} accounts`);
   }
 }
 
@@ -175,6 +250,15 @@ async function settleReady(db: D1Database, nowMs: number, log: string[]) {
   // 古い順に処理し、価格がそろわないセッションがあればそこで止める（順番を飛ばさない）
   const holidays = await holidaySet(db);
   for (const s of locked) {
+    // 前月からの引き継ぎが終わるまで、新しい月の精算はしない
+    const waiting = await db
+      .prepare("SELECT id FROM seasons WHERE realm = 'live' AND starts_on <= ? AND ends_on >= ? AND carry_from IS NOT NULL AND carried_at IS NULL")
+      .bind(s.trade_date, s.trade_date)
+      .first<{ id: string }>();
+    if (waiting) {
+      log.push(`waiting carry-over: ${waiting.id}`);
+      break;
+    }
     // 権利落ち日の配当・分割は、その日の精算より前に反映する
     log.push(...(await applyPendingActions(db, s.trade_date, nowMs)));
     if (!(await settleLiveSession(db, s.trade_date, s.timing, nowMs))) {
@@ -182,6 +266,7 @@ async function settleReady(db: D1Database, nowMs: number, log: string[]) {
       break;
     }
     log.push(`settled ${s.trade_date} ${s.timing}`);
+    if (await commentaryTask(db, s.trade_date, s.timing, nowMs)) log.push(`commentary task: ${s.trade_date} ${s.timing}`);
     if (s.timing === 'close') log.push(`operator tasks: ${(await tasksAfterClose(db, s.trade_date, holidays, nowMs)).join(', ')}`);
   }
 }

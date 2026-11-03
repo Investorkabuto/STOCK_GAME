@@ -25,7 +25,15 @@ export interface Env {
 }
 
 export const INITIAL_CASH = 10_000_000;
-export const RULES_VERSION = '2026-11-04.1';
+export const RULES_VERSION = '2026-11-04.2';
+/**
+ * テスト運用の大会。審査なしで即参加でき、月の途中からも参加できる。成績は翌月に引き継がない（殿堂にも載せない）。
+ * 登録の受け付けは entryOpensAt から。
+ */
+export const TEST_SEASONS: Record<string, { entryOpensAt: string }> = {
+  ssn_2026_11: { entryOpensAt: '2026-11-07T00:00:00+09:00' },
+};
+export const isTestSeason = (id: string | null | undefined) => !!id && id in TEST_SEASONS;
 export const SANDBOX_SEASON_ID = 'ssn_sandbox';
 export const STRATEGIES = ['contrarian', 'trend', 'technical', 'fundamental', 'defensive'] as const;
 
