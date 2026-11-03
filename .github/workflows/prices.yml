@@ -15,6 +15,10 @@ on:
         description: "データの無い銘柄を「値が付かなかった」として確定させる"
         type: boolean
         default: false
+      probe:
+        description: "接続確認のみ: 指定した銘柄コード（例 7203）の直近の日足を表示し、アプリには書き込まない"
+        type: string
+        default: ""
 
 concurrency:
   group: fetch-prices
@@ -37,7 +41,9 @@ jobs:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
         run: |
-          if [ "${{ github.event.schedule }}" = "0 9 * * 1-5" ] || [ "${{ inputs.final }}" = "true" ]; then
+          if [ -n "${{ inputs.probe }}" ]; then
+            python scripts/fetch_prices.py --probe "${{ inputs.probe }}"
+          elif [ "${{ github.event.schedule }}" = "0 9 * * 1-5" ] || [ "${{ inputs.final }}" = "true" ]; then
             python scripts/fetch_prices.py --final
           else
             python scripts/fetch_prices.py

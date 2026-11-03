@@ -76,7 +76,12 @@ def usable(v: float) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--final", action="store_true")
+    parser.add_argument("--probe", metavar="TICKER", help="アプリに書き込まず、指定銘柄の直近5営業日の日足を表示する（Yahoo への接続確認用）")
     args = parser.parse_args()
+    if args.probe:
+        df = yf.download(f"{args.probe}.T", period="5d", interval="1d", auto_adjust=False, progress=False)
+        print(df)
+        return 0 if not df.empty else 1
     now = dt.datetime.now(JST)
 
     requests = api("GET", "/internal/price-requests")["requests"]
