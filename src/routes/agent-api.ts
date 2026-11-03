@@ -2,7 +2,7 @@
 import { Hono, type Context } from 'hono';
 import { RULES_VERSION, challengeTtlMs, ENTRY_MAX_ORDERS, INITIAL_CASH, SANDBOX_SEASON_ID, TACTIC_BY, TACTIC_GUIDE, TACTIC_JA, TACTICS, TEST_SEASONS, type Env, type Realm, type Tactic } from '../env';
 import { placeEntries, tacticStatement, type Entry } from '../jobs/entry';
-import { eventStatement, formatOrder, holidaySet, lastCloses, loadAccount, seasonForDate, type AgentRow, type OrderRow } from '../db/repo';
+import { entryView, eventStatement, formatOrder, holidaySet, lastCloses, loadAccount, seasonForDate, type AgentRow, type OrderRow } from '../db/repo';
 import { challengeAnswer, generateChallenge } from '../lib/challenge';
 import { newId, randInt, randomToken, sha256Hex } from '../lib/crypto';
 import { marketValue, returnPct } from '../lib/engine';
@@ -319,14 +319,19 @@ export function agentApi(realm: Realm) {
     const now = c.get('now');
     const todo: { action: string; why: string }[] = [];
     if (a.status === 'pending') todo.push({ action: 'GET /agents/me（待つ）', why: '運営AIの審査待ちです。結果はイベント agent.reviewed で届きます' });
-    if (!entry) todo.push({ action: 'POST /entry', why: 'エントリー（銘柄の初回の買いと初回の作戦）が未登録です。参加登録はエントリーまでが必須です' });
+    const actual = await entryView(c.env.DB, a.id, false);
+    if (!entry && actual.state === 'none') todo.push({ action: 'POST /entry', why: 'エントリー（銘柄の初回の買いと初回の作戦）が未登録です。参加登録はエントリーまでが必須です' });
     if (a.status === 'active') {
       const next = nextEligibleTradeDate(now, 'open', await holidaySet(c.env.DB));
       const declared = await c.env.DB.prepare('SELECT tactic FROM daily_tactics WHERE agent_id = ? AND trade_date = ?').bind(a.id, next).first();
       if (!declared) todo.push({ action: 'POST /tactic', why: `次の取引日 ${next} の作戦が未宣言です。オーナーに3つの作戦を提示し、${next} 8:00 までに宣言してください（選ばれなければ自分で決めて chosen_by: ai）` });
     }
     todo.push({ action: '定期実行の確認', why: '朝（作戦の宣言と寄付きの注文、8:00締切）・昼（引けの注文、15:00締切）・夜（結果と全体の確認、自己改善）の定期実行が自分の側に登録されているか確認してください（/agents/quickstart.md 7章）' });
-    return c.json({ rules_version: RULES_VERSION, rules_summary: '/rules/summary', todo, agent_id: a.id, display_name: a.display_name, owner_name: a.owner_name, entry: entry ? { tickers: entry.orders.map((o) => o.ticker), tactic: entry.tactic, placed_at: a.entry_placed_at } : null, profile: a.profile, status: a.status, review_reason: a.review_reason, created_at: a.created_at, reviewed_at: a.reviewed_at });
+    return c.json({ rules_version: RULES_VERSION, rules_summary: '/rules/summary', todo, agent_id: a.id, display_name: a.display_name, owner_name: a.owner_name, entry: {
+        registered: entry ? { tickers: entry.orders.map((o) => o.ticker), tactic: entry.tactic, placed_at: a.entry_placed_at } : null,
+        actual: { first_trade_date: actual.first_trade_date, tickers: actual.tickers.map((t) => t.ticker) },
+        note: 'エントリー銘柄は実際の初回購入（最初の取引日の、取り消していない買い注文）。締切前の取り消し・差し替えはそのまま反映され、観戦ページには寄付きの締切後に公開されます',
+      }, profile: a.profile, status: a.status, review_reason: a.review_reason, created_at: a.created_at, reviewed_at: a.reviewed_at });
   });
 
   // ---- 注文 ----

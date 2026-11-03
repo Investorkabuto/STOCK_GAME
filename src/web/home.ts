@@ -4,6 +4,7 @@ import type { HtmlEscapedString } from 'hono/utils/html';
 import { renderMarkdown } from '../lib/markdown';
 import { isTestSeason, TACTIC_GUIDE, TACTIC_JA, TACTICS, type Tactic } from '../env';
 import type { Contestant } from '../routes/public';
+import type { EntryView } from '../db/repo';
 import type { ReportRow } from '../routes/public';
 import type { aiProfile, hallOfFame, stockPage } from '../stats';
 
@@ -125,6 +126,13 @@ ${body}
 </body></html>`;
 }
 
+/** エントリー銘柄（実際の初回購入）。銘柄は寄付きの締切後に公開 */
+function entryHtml(e: EntryView) {
+  if (e.state === 'none') return html`<span class="muted">エントリー銘柄は未登録</span>`;
+  if (e.state === 'pending') return html`<span class="tag entry">エントリー済み</span> <span class="muted">銘柄は寄付きの締切（8:00）後に公開</span>`;
+  return html`<span class="tag entry">エントリー中</span> ${e.tickers.map((t) => html`<a href="/stocks/${t.ticker}">${t.ticker}${t.name ? ` ${t.name}` : ''}</a> `)}<span class="muted">（${e.first_trade_date ?? ''} の初回購入）</span>`;
+}
+
 function tacticChip(tactic: string, by: string) {
   return html`<span class="tactic t-${tactic}">${TACTIC_JA[tactic as Tactic] ?? tactic}${by === 'ai' ? '（AI判断）' : ''}</span>`;
 }
@@ -196,9 +204,7 @@ ${players.length === 0
   ? html`<p class="muted">まだ出場しているAIはいません。</p>`
   : html`<div class="players">${players.map(
       (p) => html`<div class="player"><div><a href="/ai/${p.agent_id}"><strong>${p.display_name}</strong></a> <span class="muted">参加者 ${p.owner_name ?? '—'}</span></div>
-      <div class="meta">${p.entry.length
-        ? html`<span class="tag entry">${p.entry_placed ? 'エントリー中' : 'エントリー待ち'}</span> ${p.entry.map((e) => html`<a href="/stocks/${e.ticker}">${e.ticker}${e.name ? ` ${e.name}` : ''}</a> `)}`
-        : html`<span class="muted">エントリー銘柄は未登録</span>`}</div>
+      <div class="meta">${entryHtml(p.entry)}</div>
       <div class="meta">かぶり度: ${p.overlap_pct == null ? html`<span class="muted">保有なし</span>` : `${p.overlap_pct}%`}</div>
       <div class="meta">作戦: ${p.tactic ? html`${tacticChip(p.tactic.tactic, p.tactic.chosen_by)} <span class="muted">${p.tactic.trade_date}</span>` : html`<span class="muted">まだ公開されていません</span>`}</div></div>`,
     )}</div>`}
@@ -240,7 +246,7 @@ ${current && current.total != null
   : html`<p class="muted">今シーズンの成績はまだありません。</p>`}
 
 <h2>エントリー銘柄</h2>
-${p.entry.length === 0 ? html`<p class="muted">登録されていません。</p>` : html`<p>${p.entry.map((e) => html`<a class="tag entry" href="/stocks/${e.ticker}">${e.ticker}${e.name ? ` ${e.name}` : ''}</a> `)}</p>`}
+<p>${entryHtml(p.entry)}</p>
 
 <h2>かぶり度</h2>
 <p>${p.overlap_pct == null ? html`<span class="muted">保有がありません。</span>` : html`<strong>${p.overlap_pct}%</strong> <span class="muted">保有評価額のうち、ほかのAIも持っている銘柄の割合。低いほど独自の選び方をしています</span>`}</p>

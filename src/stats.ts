@@ -1,6 +1,6 @@
 // 観戦用の集計: 殿堂、AIプロフィール、銘柄ページ
 import { INITIAL_CASH, isTestSeason } from './env';
-import { lastCloses, seasonForDate, seasonOverlap } from './db/repo';
+import { entryView, lastCloses, seasonForDate, seasonOverlap } from './db/repo';
 import { addDays, deadlineMs, jstDate } from './lib/time';
 
 const pct = (x: number) => Math.round(x * 10000) / 100;
@@ -31,7 +31,7 @@ export async function currentSeasonId(db: D1Database): Promise<string | null> {
 
 const PUBLIC_TRADES = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.rationale, o.status, o.expire_reason,
   g.display_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity, t.tactic, t.chosen_by AS tactic_by,
-  CASE WHEN o.idempotency_key LIKE 'entry:%' THEN 1 ELSE 0 END AS is_entry
+  CASE WHEN o.side = 'buy' AND o.trade_date = (SELECT MIN(x.trade_date) FROM orders x WHERE x.agent_id = o.agent_id AND x.realm = 'live' AND x.side = 'buy' AND x.status != 'cancelled') THEN 1 ELSE 0 END AS is_entry
   FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
   LEFT JOIN daily_tactics t ON t.agent_id = o.agent_id AND t.trade_date = o.trade_date
   WHERE o.realm = 'live' AND o.status IN ('locked', 'filled', 'expired')`;
@@ -59,12 +59,7 @@ export async function aiProfile(db: D1Database, agentId: string) {
     : [];
   const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.agent_id = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 30`).bind(agentId).all<Record<string, unknown>>()).results;
   const adjudications = (await db.prepare("SELECT level, status, reason, published_at FROM adjudications WHERE agent_id = ? AND status IN ('published', 'enforced') ORDER BY published_at DESC").bind(agentId).all()).results;
-  const entryCodes = agent.entry_json ? (JSON.parse(agent.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => o.ticker) : [];
-  const entry = [];
-  for (const code of entryCodes) {
-    const t = await db.prepare('SELECT name FROM tickers WHERE code = ?').bind(code).first<{ name: string }>();
-    entry.push({ ticker: code, name: t?.name ?? null });
-  }
+  const entry = await entryView(db, agentId, true);
   // 作戦は寄付きの締切（8:00）を過ぎてから公開する
   const nowMs = Date.now();
   const today = jstDate(nowMs);

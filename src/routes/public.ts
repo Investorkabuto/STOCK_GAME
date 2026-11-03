@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { INITIAL_CASH, isTestSeason, RULES_VERSION, type Env } from '../env';
 import { returnPct } from '../lib/engine';
-import { holidaySet, seasonForDate, seasonOverlap } from '../db/repo';
+import { entryView, holidaySet, seasonForDate, seasonOverlap, type EntryView } from '../db/repo';
 import { addDays, deadlineMs, isBusinessDay, jstDate } from '../lib/time';
 import { enforceRateLimit } from '../lib/http';
 import { aiProfile, hallOfFame, stockPage } from '../stats';
@@ -68,8 +68,8 @@ export interface Contestant {
   agent_id: string;
   display_name: string;
   owner_name: string | null;
-  entry: { ticker: string; name: string | null }[];
-  entry_placed: boolean;
+  /** エントリー銘柄（実際の初回購入。寄付きの締切後に公開） */
+  entry: EntryView;
   /** 公開済みの最新の作戦（寄付きの締切を過ぎたもの） */
   tactic: { trade_date: string; tactic: string; chosen_by: string } | null;
   overlap_pct: number | null;
@@ -101,21 +101,15 @@ export async function contestants(db: D1Database, nowMs: number): Promise<Contes
         .all<{ agent_id: string; trade_date: string; tactic: string; chosen_by: string }>()
     ).results.map((t) => [t.agent_id, { trade_date: t.trade_date, tactic: t.tactic, chosen_by: t.chosen_by }]),
   );
-  const codes = [...new Set(rows.flatMap((r) => (r.entry_json ? (JSON.parse(r.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => o.ticker) : [])))];
-  const names = new Map<string, string>();
-  for (let i = 0; i < codes.length; i += 50) {
-    const chunk = codes.slice(i, i + 50);
-    const r = await db.prepare(`SELECT code, name FROM tickers WHERE code IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all<{ code: string; name: string }>();
-    for (const t of r.results) names.set(t.code, t.name);
-  }
   const overlap = await seasonOverlap(db, season.id, today);
+  const entries = new Map<string, EntryView>();
+  for (const r of rows) entries.set(r.agent_id, await entryView(db, r.agent_id, true));
   return rows.map((r) => ({
     overlap_pct: overlap.get(r.agent_id) ?? null,
     agent_id: r.agent_id,
     display_name: r.display_name,
     owner_name: r.owner_name,
-    entry: r.entry_json ? (JSON.parse(r.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => ({ ticker: o.ticker, name: names.get(o.ticker) ?? null })) : [],
-    entry_placed: r.entry_placed_at != null,
+    entry: entries.get(r.agent_id)!,
     tactic: tactics.get(r.agent_id) ?? null,
   }));
 }
@@ -139,7 +133,7 @@ publicApi.get('/leaderboard', async (c) => c.json(await leaderboard(c.env.DB, Da
 export async function feed(db: D1Database, date: string | undefined, limit: number) {
   let sql = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.rationale, o.status, o.expire_reason,
                     g.display_name, g.owner_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity, t.tactic, t.chosen_by AS tactic_by,
-                    CASE WHEN o.idempotency_key LIKE 'entry:%' THEN 1 ELSE 0 END AS is_entry
+                    CASE WHEN o.side = 'buy' AND o.trade_date = (SELECT MIN(x.trade_date) FROM orders x WHERE x.agent_id = o.agent_id AND x.realm = 'live' AND x.side = 'buy' AND x.status != 'cancelled') THEN 1 ELSE 0 END AS is_entry
              FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
              LEFT JOIN daily_tactics t ON t.agent_id = o.agent_id AND t.trade_date = o.trade_date
              WHERE o.realm = 'live' AND o.status IN ('locked', 'filled', 'expired')`;

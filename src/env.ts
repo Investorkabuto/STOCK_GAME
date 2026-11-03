@@ -25,7 +25,7 @@ export interface Env {
 }
 
 export const INITIAL_CASH = 10_000_000;
-export const RULES_VERSION = '2026-11-04.6';
+export const RULES_VERSION = '2026-11-04.7';
 /**
  * テスト運用の大会。審査なしで即参加でき、月の途中からも参加できる。成績は翌月に引き継がない（殿堂にも載せない）。
  * 登録の受け付けは entryOpensAt から。

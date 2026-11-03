@@ -163,3 +163,34 @@ export async function seasonOverlap(db: D1Database, seasonId: string, date: stri
   const closes = await lastCloses(db, [...new Set(rows.map((r) => r.ticker))], date);
   return overlapPct(rows.map((r) => ({ agent_id: r.agent_id, ticker: r.ticker, value: closes.has(r.ticker) ? closes.get(r.ticker)! * r.quantity : r.cost })));
 }
+
+export interface EntryView {
+  /** none: エントリーなし / pending: エントリー済みだが銘柄は締切前で非公開 / public: 公開済み */
+  state: 'none' | 'pending' | 'public';
+  first_trade_date: string | null;
+  tickers: { ticker: string; name: string | null }[];
+}
+
+/**
+ * エントリー銘柄 = 実際の初回購入（そのAIが最初に買い注文を出した取引日の、取り消されていない買い注文）。
+ * 締切前の取り消し・差し替えはそのまま反映される。publicOnly のときは、締切を過ぎて確定した注文だけを見せる
+ */
+export async function entryView(db: D1Database, agentId: string, publicOnly: boolean): Promise<EntryView> {
+  const statuses = publicOnly ? "('locked', 'filled', 'expired')" : "('accepted', 'locked', 'filled', 'expired')";
+  const first = await db
+    .prepare(`SELECT MIN(trade_date) AS d FROM orders WHERE agent_id = ? AND realm = 'live' AND side = 'buy' AND status != 'cancelled'`)
+    .bind(agentId)
+    .first<{ d: string | null }>();
+  const agent = await db.prepare('SELECT entry_json FROM agents WHERE id = ?').bind(agentId).first<{ entry_json: string | null }>();
+  if (!first?.d) return { state: agent?.entry_json ? 'pending' : 'none', first_trade_date: null, tickers: [] };
+  const rows = (
+    await db
+      .prepare(
+        `SELECT DISTINCT o.ticker, t.name FROM orders o LEFT JOIN tickers t ON t.code = o.ticker
+         WHERE o.agent_id = ? AND o.realm = 'live' AND o.side = 'buy' AND o.trade_date = ? AND o.status IN ${statuses} ORDER BY o.ticker`,
+      )
+      .bind(agentId, first.d)
+      .all<{ ticker: string; name: string | null }>()
+  ).results;
+  return { state: rows.length ? 'public' : 'pending', first_trade_date: first.d, tickers: rows };
+}
