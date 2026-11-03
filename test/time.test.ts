@@ -9,8 +9,11 @@ describe('time', () => {
     expect(jstIso(Date.parse('2026-11-03T22:41:12Z'))).toBe('2026-11-04T07:41:12+09:00');
   });
   it('締切前なら当日、締切後は次の営業日', () => {
-    expect(nextEligibleTradeDate(jstToMs('2026-11-04', 7, 59), 'open', H)).toBe('2026-11-04');
-    expect(nextEligibleTradeDate(jstToMs('2026-11-04', 8, 0), 'open', H)).toBe('2026-11-05');
+    expect(nextEligibleTradeDate(jstToMs('2026-11-05', 8, 44), 'open', H)).toBe('2026-11-05');
+    expect(nextEligibleTradeDate(jstToMs('2026-11-05', 8, 45), 'open', H)).toBe('2026-11-06');
+    // 2026-11-04 だけは 8:55 締切
+    expect(nextEligibleTradeDate(jstToMs('2026-11-04', 8, 54), 'open', H)).toBe('2026-11-04');
+    expect(nextEligibleTradeDate(jstToMs('2026-11-04', 8, 55), 'open', H)).toBe('2026-11-05');
     expect(nextEligibleTradeDate(jstToMs('2026-11-04', 14, 59), 'close', H)).toBe('2026-11-04');
     expect(nextEligibleTradeDate(jstToMs('2026-11-06', 15, 0), 'close', H)).toBe('2026-11-09'); // 金曜→月曜
     expect(nextEligibleTradeDate(jstToMs('2026-11-02', 9, 0), 'open', H)).toBe('2026-11-04'); // 祝日をとばす

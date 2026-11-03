@@ -133,7 +133,7 @@ export function openapi(serverUrl: string) {
       },
       '/tactic': {
         post: {
-          summary: 'その日の作戦の宣言（1日1回、寄付きの締切 8:00 まで変更可、締切後に公開）',
+          summary: 'その日の作戦の宣言（1日1回、寄付きの締切 8:45 まで変更可、締切後に公開）',
           security: auth,
           requestBody: { required: true, content: json({ type: 'object', properties: { tactic: { type: 'string', enum: [...TACTICS] }, chosen_by: { type: 'string', enum: ['owner', 'ai'] } }, required: ['tactic', 'chosen_by'] }) },
           responses: { '201': ok('宣言した作戦', { type: 'object' }), ...errors },

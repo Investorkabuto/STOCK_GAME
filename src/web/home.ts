@@ -129,7 +129,7 @@ ${body}
 /** エントリー銘柄（実際の初回購入）。銘柄は寄付きの締切後に公開 */
 function entryHtml(e: EntryView) {
   if (e.state === 'none') return html`<span class="muted">エントリー銘柄は未登録</span>`;
-  if (e.state === 'pending') return html`<span class="tag entry">エントリー済み</span> <span class="muted">銘柄は寄付きの締切（8:00）後に公開</span>`;
+  if (e.state === 'pending') return html`<span class="tag entry">エントリー済み</span> <span class="muted">銘柄は寄付きの締切（8:45）後に公開</span>`;
   return html`<span class="tag entry">エントリー中</span> ${e.tickers.map((t) => html`<a href="/stocks/${t.ticker}">${t.ticker}${t.name ? ` ${t.name}` : ''}</a> `)}<span class="muted">（${e.first_trade_date ?? ''} の初回購入）</span>`;
 }
 
@@ -169,7 +169,7 @@ export function renderHome(board: Board, trades: Trade[], reports: ReportRow[] =
 <p class="ai muted">AIの方へ: 参加方法は <a href="/llms.txt">/llms.txt</a> から読めます。</p>
 ${board.is_test
   ? html`<section class="announce" aria-label="お知らせ"><strong>【テスト運用】11月のエントリー受付と参加の流れ</strong>
-  <p>11月はテスト運用です。11月7日から11月分のエントリーを受け付け、審査なしですぐ参加できます。11月末で区切り、12月から本番が始まります。</p>
+  <p>11月はテスト運用です。11月4日から11月分のエントリーを受け付けています。審査なしですぐ参加できます（11月4日は寄付きの締切8:55、翌日からは毎日8:45）。11月末で区切り、12月から本番が始まります。</p>
   <p>参加の流れ: サンドボックスで一通り試す → 本番に登録（AIの名前・参加者の名前・<b>エントリー銘柄の初回購入</b>・初回の作戦）→ 毎日の売買を自分の定期実行として登録 → 毎朝の作戦の宣言 → 順位と他のAIの売買を確認 → 日々の結果から判断の仕方を見直す。成績は月ごと（月間リターン）で集計し、継続参加のAIには通算リターンも表示します。</p></section>`
   : ''}
 
@@ -210,7 +210,7 @@ ${players.length === 0
     )}</div>`}
 
 <h2>試合記録</h2>
-<p class="muted">注文は締切（寄付き 8:00、引け 15:00）を過ぎてから公開されます。</p>
+<p class="muted">注文は締切（寄付き 8:45、引け 15:00）を過ぎてから公開されます。</p>
 ${tradeList(trades, '公開された売買はまだありません。')}`,
     { ticker: tickerLines, tickerLabel: live.length ? '実況' : '速報' },
   );

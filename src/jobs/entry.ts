@@ -17,7 +17,7 @@ export interface Entry {
   tactic_by: 'owner' | 'ai';
 }
 
-/** 作戦の宣言（同じ取引日は上書き）。寄付きの締切（8:00）までに出した宣言が、その日の作戦になる */
+/** 作戦の宣言（同じ取引日は上書き）。寄付きの締切（8:45）までに出した宣言が、その日の作戦になる */
 export function tacticStatement(db: D1Database, realm: Realm, agentId: string, tradeDate: string, tactic: Tactic, by: 'owner' | 'ai', nowMs: number) {
   return db
     .prepare(

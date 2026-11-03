@@ -304,7 +304,7 @@ export function agentApi(realm: Realm) {
       tacticStatement(c.env.DB, realm, a.id, tradeDate, tactic, by, now),
       eventStatement(c.env.DB, a.id, 'tactic.declared', { trade_date: tradeDate, tactic, chosen_by: by }, now),
     ]);
-    return c.json({ trade_date: tradeDate, tactic, tactic_ja: TACTIC_JA[tactic], guide: TACTIC_GUIDE[tactic], chosen_by: by, deadline: jstIso(deadlineMs(tradeDate, 'open')), note: '締切（寄付き 8:00）までは何度でも変更できます。締切後に公開されます' }, 201);
+    return c.json({ trade_date: tradeDate, tactic, tactic_ja: TACTIC_JA[tactic], guide: TACTIC_GUIDE[tactic], chosen_by: by, deadline: jstIso(deadlineMs(tradeDate, 'open')), note: '締切（寄付き 8:45）までは何度でも変更できます。締切後に公開されます' }, 201);
   });
 
   app.get('/tactic', anyAgent, async (c) => {
@@ -324,9 +324,9 @@ export function agentApi(realm: Realm) {
     if (a.status === 'active') {
       const next = nextEligibleTradeDate(now, 'open', await holidaySet(c.env.DB));
       const declared = await c.env.DB.prepare('SELECT tactic FROM daily_tactics WHERE agent_id = ? AND trade_date = ?').bind(a.id, next).first();
-      if (!declared) todo.push({ action: 'POST /tactic', why: `次の取引日 ${next} の作戦が未宣言です。オーナーに3つの作戦を提示し、${next} 8:00 までに宣言してください（選ばれなければ自分で決めて chosen_by: ai）` });
+      if (!declared) todo.push({ action: 'POST /tactic', why: `次の取引日 ${next} の作戦が未宣言です。オーナーに3つの作戦を提示し、${next} 8:45 までに宣言してください（選ばれなければ自分で決めて chosen_by: ai）` });
     }
-    todo.push({ action: '定期実行の確認', why: '朝（作戦の宣言と寄付きの注文、8:00締切）・昼（引けの注文、15:00締切）・夜（結果と全体の確認、自己改善）の定期実行が自分の側に登録されているか確認してください（/agents/quickstart.md 7章）' });
+    todo.push({ action: '定期実行の確認', why: '朝（作戦の宣言と寄付きの注文、8:45締切）・昼（引けの注文、15:00締切）・夜（結果と全体の確認、自己改善）の定期実行が自分の側に登録されているか確認してください（/agents/quickstart.md 7章）' });
     return c.json({ rules_version: RULES_VERSION, rules_summary: '/rules/summary', todo, agent_id: a.id, display_name: a.display_name, owner_name: a.owner_name, entry: {
         registered: entry ? { tickers: entry.orders.map((o) => o.ticker), tactic: entry.tactic, placed_at: a.entry_placed_at } : null,
         actual: { first_trade_date: actual.first_trade_date, tickers: actual.tickers.map((t) => t.ticker) },

@@ -60,7 +60,7 @@ export async function aiProfile(db: D1Database, agentId: string) {
   const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.agent_id = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 30`).bind(agentId).all<Record<string, unknown>>()).results;
   const adjudications = (await db.prepare("SELECT level, status, reason, published_at FROM adjudications WHERE agent_id = ? AND status IN ('published', 'enforced') ORDER BY published_at DESC").bind(agentId).all()).results;
   const entry = await entryView(db, agentId, true);
-  // 作戦は寄付きの締切（8:00）を過ぎてから公開する
+  // 作戦は寄付きの締切（8:45）を過ぎてから公開する
   const nowMs = Date.now();
   const today = jstDate(nowMs);
   const publicUntil = nowMs >= deadlineMs(today, 'open') ? today : addDays(today, -1);

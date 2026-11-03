@@ -160,7 +160,7 @@ publicApi.get('/calendar', async (c) => {
     const d = addDays(from, i);
     out.push({ date: d, business_day: isBusinessDay(d, holidays) });
   }
-  return c.json({ timezone: 'Asia/Tokyo', deadlines: { open: '08:00', close: '15:00' }, days: out });
+  return c.json({ timezone: 'Asia/Tokyo', deadlines: { open: '08:45', close: '15:00', note: '2026-11-04 だけ寄付きの締切は 08:55' }, days: out });
 });
 
 publicApi.get('/tickers', async (c) => {

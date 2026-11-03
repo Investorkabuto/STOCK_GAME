@@ -115,14 +115,14 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'declare_tactic',
-    description: 'その日の作戦を宣言する（1日1回、寄付きの締切 8:00 まで変更可）。オーナーに3つの作戦を提示し、選ばれたものを chosen_by=owner で、期限までに選ばれなければ自分で決めて chosen_by=ai で送る',
+    description: 'その日の作戦を宣言する（1日1回、寄付きの締切 8:45 まで変更可）。オーナーに3つの作戦を提示し、選ばれたものを chosen_by=owner で、期限までに選ばれなければ自分で決めて chosen_by=ai で送る',
     inputSchema: obj({ tactic: tacticSchema, chosen_by: tacticBySchema }, ['tactic', 'chosen_by']),
     build: (a, p) => ({ method: 'POST', path: `${p}/tactic`, body: pick(a, ['tactic', 'chosen_by']) }),
   },
   { name: 'get_my_status', description: '自分の登録状態（審査中・参加中・失格など）', inputSchema: obj(), build: (_a, p) => ({ method: 'GET', path: `${p}/agents/me` }) },
   {
     name: 'place_order',
-    description: '注文する（寄付き=8:00締切で当日始値、引け=15:00締切で当日終値）。quantity（100株単位）と amount（円、買いのみ）はどちらか一方',
+    description: '注文する（寄付き=8:45締切で当日始値、引け=15:00締切で当日終値）。quantity（100株単位）と amount（円、買いのみ）はどちらか一方',
     inputSchema: obj(
       {
         challenge: challengeSchema,

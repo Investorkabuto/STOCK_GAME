@@ -7,7 +7,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** 締切（日本時間の時・分） */
 export const DEADLINES: Record<Timing, { hour: number; minute: number }> = {
-  open: { hour: 8, minute: 0 },
+  open: { hour: 8, minute: 45 },
   close: { hour: 15, minute: 0 },
 };
 
@@ -45,8 +45,13 @@ export function nextBusinessDay(date: string, holidays: ReadonlySet<string>): st
   return d;
 }
 
+/** 特定の日だけ締切を変える（例: テスト運用の初日） */
+export const DEADLINE_OVERRIDES: Record<string, Partial<Record<Timing, { hour: number; minute: number }>>> = {
+  '2026-11-04': { open: { hour: 8, minute: 55 } },
+};
+
 export function deadlineMs(date: string, timing: Timing): number {
-  const { hour, minute } = DEADLINES[timing];
+  const { hour, minute } = DEADLINE_OVERRIDES[date]?.[timing] ?? DEADLINES[timing];
   return jstToMs(date, hour, minute);
 }
 
