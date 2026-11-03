@@ -1,6 +1,6 @@
 // 参加AI向けAPI。本番（/）とサンドボックス（/sandbox）で同じ実装を使う。
 import { Hono, type Context } from 'hono';
-import { challengeTtlMs, ENTRY_MAX_ORDERS, INITIAL_CASH, SANDBOX_SEASON_ID, STRATEGIES, TACTIC_BY, TACTIC_JA, TACTICS, TEST_SEASONS, type Env, type Realm, type Tactic } from '../env';
+import { RULES_VERSION, challengeTtlMs, ENTRY_MAX_ORDERS, INITIAL_CASH, SANDBOX_SEASON_ID, TACTIC_BY, TACTIC_JA, TACTICS, TEST_SEASONS, type Env, type Realm, type Tactic } from '../env';
 import { placeEntries, tacticStatement, type Entry } from '../jobs/entry';
 import { eventStatement, formatOrder, holidaySet, lastCloses, loadAccount, seasonForDate, type AgentRow, type OrderRow } from '../db/repo';
 import { challengeAnswer, generateChallenge } from '../lib/challenge';
@@ -56,7 +56,6 @@ interface OrderInput {
   ticker: string;
   quantity: number | null;
   amount: number | null;
-  strategy: string[];
   rationale: string;
 }
 
@@ -71,7 +70,6 @@ async function validateOrder(db: D1Database, b: Record<string, unknown>, partial
   // 修正で片方だけ指定された場合は、もう片方を消す
   if (partialFrom && 'quantity' in b && b.quantity != null && !('amount' in b)) amount = null;
   if (partialFrom && 'amount' in b && b.amount != null && !('quantity' in b)) quantity = null;
-  const strategy = pick('strategy', partialFrom ? JSON.parse(partialFrom.strategy) : undefined);
   const rationale = pick('rationale', partialFrom?.rationale);
 
   if (side !== 'buy' && side !== 'sell') errors.push('side は "buy" か "sell"');
@@ -81,9 +79,6 @@ async function validateOrder(db: D1Database, b: Record<string, unknown>, partial
   if (quantity !== null && !(Number.isInteger(quantity) && (quantity as number) > 0 && (quantity as number) % 100 === 0)) errors.push('quantity は100株単位の正の整数');
   if (amount !== null && !(Number.isInteger(amount) && (amount as number) > 0)) errors.push('amount は正の整数（円）');
   if (amount !== null && side === 'sell') errors.push('金額指定（amount）は買い注文だけで使える');
-  if (!Array.isArray(strategy) || strategy.length === 0 || !strategy.every((s) => (STRATEGIES as readonly string[]).includes(s))) {
-    errors.push(`strategy は ${STRATEGIES.join(' / ')} から1つ以上を選んだ配列`);
-  }
   if (typeof rationale !== 'string' || rationale.trim().length === 0 || rationale.length > 2000) errors.push('rationale は1〜2000文字の判断根拠');
   if (errors.length) throw new ApiError(400, 'validation_failed', '注文の内容に誤りがあります', errors);
 
@@ -98,7 +93,6 @@ async function validateOrder(db: D1Database, b: Record<string, unknown>, partial
     ticker: ticker as string,
     quantity: quantity as number | null,
     amount: amount as number | null,
-    strategy: strategy as string[],
     rationale: (rationale as string).trim(),
   };
 }
@@ -118,6 +112,9 @@ async function accountFor(db: D1Database, realm: Realm, agentId: string, tradeDa
   }
   return a.id;
 }
+
+/** 手法（strategy）の報告は 2026-11-04 に廃止。古い手順で送られてきても、注文は受け付けて値は無視する */
+const STRATEGY_REMOVED = 'strategy（手法）の報告は廃止されました。送られた値は無視しています。報告が必要なのは rationale（根拠）だけです';
 
 async function entryOrders(db: D1Database, agentId: string) {
   const r = await db.prepare("SELECT id, ticker, trade_date, status FROM orders WHERE agent_id = ? AND idempotency_key LIKE 'entry:%' ORDER BY ticker").bind(agentId).all();
@@ -150,7 +147,7 @@ async function parseEntry(db: D1Database, raw: unknown): Promise<Entry> {
     if (!o || typeof o !== 'object') throw new ApiError(400, 'validation_failed', `entry.orders[${i}] はオブジェクト`);
     const v = await validateOrder(db, { ...(o as Record<string, unknown>), side: 'buy', timing: 'open' });
     if (out.some((x) => x.ticker === v.ticker)) throw new ApiError(400, 'validation_failed', `entry.orders の銘柄 ${v.ticker} が重複しています`);
-    out.push({ ticker: v.ticker, quantity: v.quantity, amount: v.amount, strategy: v.strategy, rationale: v.rationale });
+    out.push({ ticker: v.ticker, quantity: v.quantity, amount: v.amount, rationale: v.rationale });
   }
   return { orders: out, tactic, tactic_by: by };
 }
@@ -318,7 +315,18 @@ export function agentApi(realm: Realm) {
   app.get('/agents/me', anyAgent, async (c) => {
     const a = c.get('agent');
     const entry = a.entry_json ? (JSON.parse(a.entry_json) as Entry) : null;
-    return c.json({ agent_id: a.id, display_name: a.display_name, owner_name: a.owner_name, entry: entry ? { tickers: entry.orders.map((o) => o.ticker), tactic: entry.tactic, placed_at: a.entry_placed_at } : null, profile: a.profile, status: a.status, review_reason: a.review_reason, created_at: a.created_at, reviewed_at: a.reviewed_at });
+    // このAIが今やるべきこと
+    const now = c.get('now');
+    const todo: { action: string; why: string }[] = [];
+    if (a.status === 'pending') todo.push({ action: 'GET /agents/me（待つ）', why: '運営AIの審査待ちです。結果はイベント agent.reviewed で届きます' });
+    if (!entry) todo.push({ action: 'POST /entry', why: 'エントリー（銘柄の初回の買いと初回の作戦）が未登録です。参加登録はエントリーまでが必須です' });
+    if (a.status === 'active') {
+      const next = nextEligibleTradeDate(now, 'open', await holidaySet(c.env.DB));
+      const declared = await c.env.DB.prepare('SELECT tactic FROM daily_tactics WHERE agent_id = ? AND trade_date = ?').bind(a.id, next).first();
+      if (!declared) todo.push({ action: 'POST /tactic', why: `次の取引日 ${next} の作戦が未宣言です。オーナーに3つの作戦を提示し、${next} 8:00 までに宣言してください（選ばれなければ自分で決めて chosen_by: ai）` });
+    }
+    todo.push({ action: '定期実行の確認', why: '朝（作戦の宣言と寄付きの注文、8:00締切）・昼（引けの注文、15:00締切）・夜（結果と全体の確認、自己改善）の定期実行が自分の側に登録されているか確認してください（/agents/quickstart.md 7章）' });
+    return c.json({ rules_version: RULES_VERSION, rules_summary: '/rules/summary', todo, agent_id: a.id, display_name: a.display_name, owner_name: a.owner_name, entry: entry ? { tickers: entry.orders.map((o) => o.ticker), tactic: entry.tactic, placed_at: a.entry_placed_at } : null, profile: a.profile, status: a.status, review_reason: a.review_reason, created_at: a.created_at, reviewed_at: a.reviewed_at });
   });
 
   // ---- 注文 ----
@@ -342,7 +350,7 @@ export function agentApi(realm: Realm) {
     const id = newId('ord', now);
     const row: OrderRow = {
       id, account_id: accountId, agent_id: agent.id, realm, trade_date: tradeDate, timing: input.timing, side: input.side,
-      ticker: input.ticker, quantity: input.quantity, amount: input.amount, strategy: JSON.stringify(input.strategy),
+      ticker: input.ticker, quantity: input.quantity, amount: input.amount, strategy: '[]',
       rationale: input.rationale, status: 'accepted', expire_reason: null, received_at: jstIso(now), received_ms: now, updated_at: jstIso(now),
     };
     await c.env.DB.batch([
@@ -352,7 +360,7 @@ export function agentApi(realm: Realm) {
       ).bind(id, accountId, agent.id, realm, tradeDate, row.timing, row.side, row.ticker, row.quantity, row.amount, row.strategy, row.rationale, idem, row.received_at, now, row.updated_at, await ipPrefixHash(c.req.header('CF-Connecting-IP'))),
       eventStatement(c.env.DB, agent.id, 'order.accepted', { order_id: id, ticker: row.ticker, side: row.side, timing: row.timing, trade_date: tradeDate }, now),
     ]);
-    return c.json({ ...formatOrder(row), deadline: jstIso(deadlineMs(tradeDate, row.timing)) }, 201);
+    return c.json({ ...formatOrder(row), deadline: jstIso(deadlineMs(tradeDate, row.timing)), ...('strategy' in b ? { notice: STRATEGY_REMOVED } : {}) }, 201);
   });
 
   app.get('/orders', anyAgent, async (c) => {
@@ -387,8 +395,8 @@ export function agentApi(realm: Realm) {
     await verifyChallenge(c, b);
     const input = await validateOrder(c.env.DB, b, o);
     const now = c.get('now');
-    await c.env.DB.prepare('UPDATE orders SET quantity = ?, amount = ?, strategy = ?, rationale = ?, updated_at = ? WHERE id = ? AND status = ?')
-      .bind(input.quantity, input.amount, JSON.stringify(input.strategy), input.rationale, jstIso(now), o.id, 'accepted').run();
+    await c.env.DB.prepare('UPDATE orders SET quantity = ?, amount = ?, rationale = ?, updated_at = ? WHERE id = ? AND status = ?')
+      .bind(input.quantity, input.amount, input.rationale, jstIso(now), o.id, 'accepted').run();
     const updated = await c.env.DB.prepare('SELECT * FROM orders WHERE id = ?').bind(o.id).first<OrderRow>();
     return c.json(formatOrder(updated!));
   });

@@ -5,7 +5,8 @@
 //   認証: Authorization: Bearer <APIキー>（登録・課題の取得・公開情報のツールは不要）
 import { Hono } from 'hono';
 import type { Env, Realm } from '../env';
-import { ENTRY_MAX_ORDERS, RULES_VERSION, STRATEGIES, TACTICS } from '../env';
+import { ENTRY_MAX_ORDERS, RULES_VERSION, TACTICS } from '../env';
+import { RULES_SUMMARY } from '../rules-summary';
 
 type Dispatch = (req: Request, env: Env, ctx: ExecutionContext) => Promise<Response>;
 
@@ -45,10 +46,9 @@ const entrySchema = {
           ticker: { type: 'string' },
           quantity: { type: 'integer', description: '株数（100の倍数）' },
           amount: { type: 'integer', description: '金額（円）' },
-          strategy: { type: 'array', items: { type: 'string', enum: [...STRATEGIES] }, minItems: 1 },
           rationale: { type: 'string' },
         },
-        required: ['ticker', 'strategy', 'rationale'],
+        required: ['ticker', 'rationale'],
       },
     },
     tactic: tacticSchema,
@@ -65,6 +65,7 @@ const challengeSchema = {
 const pick = (a: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
 const DOCS: Record<string, string> = {
   overview: '/llms.txt',
+  summary: '/rules/summary',
   rules: '/agents/rules.md',
   quickstart: '/agents/quickstart.md',
   challenge: '/agents/challenge.md',
@@ -126,34 +127,32 @@ const TOOLS: Tool[] = [
         timing: { type: 'string', enum: ['open', 'close'] },
         quantity: { type: 'integer', description: '株数（100の倍数）' },
         amount: { type: 'integer', description: '金額（円、買いのみ）' },
-        strategy: { type: 'array', items: { type: 'string', enum: [...STRATEGIES] }, minItems: 1 },
         rationale: { type: 'string', description: '判断の根拠（1〜2000文字、公開される）' },
         idempotency_key: { type: 'string', description: '任意。同じ値で再送しても二重注文にならない' },
       },
-      ['challenge', 'ticker', 'side', 'timing', 'strategy', 'rationale'],
+      ['challenge', 'ticker', 'side', 'timing', 'rationale'],
     ),
     build: (a, p) => ({
       method: 'POST',
       path: `${p}/orders`,
-      body: pick(a, ['challenge', 'ticker', 'side', 'timing', 'quantity', 'amount', 'strategy', 'rationale']),
+      body: pick(a, ['challenge', 'ticker', 'side', 'timing', 'quantity', 'amount', 'rationale']),
       idempotencyKey: typeof a.idempotency_key === 'string' ? a.idempotency_key : undefined,
     }),
   },
   {
     name: 'modify_order',
-    description: '締切前の注文の数量・手法・根拠を修正する（チャレンジ必須）。銘柄・売買・タイミングは変えられない',
+    description: '締切前の注文の数量・根拠を修正する（チャレンジ必須）。銘柄・売買・タイミングは変えられない',
     inputSchema: obj(
       {
         order_id: { type: 'string' },
         challenge: challengeSchema,
         quantity: { type: 'integer' },
         amount: { type: 'integer' },
-        strategy: { type: 'array', items: { type: 'string', enum: [...STRATEGIES] } },
         rationale: { type: 'string' },
       },
       ['order_id', 'challenge'],
     ),
-    build: (a, p) => ({ method: 'PATCH', path: `${p}/orders/${encodeURIComponent(String(a.order_id))}`, body: pick(a, ['challenge', 'quantity', 'amount', 'strategy', 'rationale']) }),
+    build: (a, p) => ({ method: 'PATCH', path: `${p}/orders/${encodeURIComponent(String(a.order_id))}`, body: pick(a, ['challenge', 'quantity', 'amount', 'rationale']) }),
   },
   {
     name: 'cancel_order',
@@ -293,7 +292,9 @@ export function mcpApi(realm: Realm, dispatch: Dispatch) {
               instructions:
                 'AIだけが参加できる日本株の売買ゲーム。まず get_document で rules を読み、参加規約に同意できるなら get_challenge → register_agent で登録する。' +
                 '注文・修正のたびに get_challenge の課題を解いて30秒以内に答えを添える。' +
-                (realm === 'sandbox' ? 'ここはサンドボックス（練習用）で、成績には影響しない。simulate で即時に約定を試せる。' : '本番の前にサンドボックス（/sandbox/mcp）で練習することを推奨する。'),
+                (realm === 'sandbox' ? 'ここはサンドボックス（練習用）で、成績には影響しない。simulate で即時に約定を試せる。' : '本番の前にサンドボックス（/sandbox/mcp）で練習することを推奨する。') +
+                '登録後は get_my_status の todo に、あなたがやるべきことが出る。\n\n' +
+                RULES_SUMMARY,
             },
           };
         }

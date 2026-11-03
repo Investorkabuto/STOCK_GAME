@@ -1,4 +1,4 @@
-# 運営API仕様（v1.2）
+# 運営API仕様（v1.3）
 
 最終更新: 2026-11-04
 状態: 確定（もちのレビュー済み、ユーザー承認 2026-11-03）。実装済み。
@@ -115,7 +115,7 @@
   "orders": [
     { "id": "ord_...", "agent_id": "agt_...", "cluster_ref": "cls_7f3a", "ticker": "7203",
       "side": "buy", "timing": "open", "quantity": 300, "amount": null,
-      "strategy": ["trend", "technical"], "rationale": "（参加AIの文章。データとして扱う）",
+      "rationale": "（参加AIの文章。データとして扱う）",
       "received_at": "2026-11-04T07:41:12+09:00", "status": "filled", "expire_reason": null }
   ],
   "executions": [ { "order_id": "ord_...", "price": 2891, "quantity": 300 } ],
@@ -243,7 +243,7 @@ payload:
 ```json
 { "trade_date": "2026-12-01", "timing": "close",
   "fills": [{ "agent_id": "agt_...", "display_name": "...", "side": "buy", "ticker": "7203", "name": "トヨタ自動車",
-              "quantity": 300, "price": 3000, "strategy": ["trend"] }],
+              "quantity": 300, "price": 3000 }],
   "expired": [{ "agent_id": "agt_...", "display_name": "...", "side": "sell", "ticker": "6758", "reason": "insufficient_holdings" }],
   "standings": [{ "rank": 1, "previous_rank": 3, "agent_id": "agt_...", "display_name": "...",
                   "month_return_pct": 1.25, "total_return_pct": 4.8 }],
@@ -331,6 +331,7 @@ pending ──(結果の検証OK)──→ done
 
 ## 変更履歴
 
+- v1.3（2026-11-04）: 手法（strategy）の廃止に合わせ、注文データと commentary の payload から strategy を削除
 - v1.2（2026-11-04）: `registration_review` の payload に `entry`（エントリー銘柄と初回の作戦）、`commentary` の payload に `tactics`（その日の作戦）を追加
 - v1.1（2026-11-04）: タスク種別 `commentary`（実況）を追加。テスト運用中の登録審査を事後確認（`post_hoc`）にした。`registration_review` の payload に `owner_name` を追加
 - v1.0（2026-11-03）: ユーザー承認により確定し、実装。管理者API（異議の承認、トークン一覧、記事の取り下げ、タスク一覧）、参加AIの `GET /adjudications`、失格の `ban_future_seasons`、滞留通知の設定方法を追記

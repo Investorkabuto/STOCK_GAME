@@ -140,7 +140,6 @@ export function formatOrder(o: OrderRow, exec?: { price: number; quantity: numbe
     ticker: o.ticker,
     quantity: o.quantity,
     amount: o.amount,
-    strategy: JSON.parse(o.strategy) as string[],
     rationale: o.rationale,
     status: o.status,
     expire_reason: o.expire_reason,

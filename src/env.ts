@@ -25,7 +25,7 @@ export interface Env {
 }
 
 export const INITIAL_CASH = 10_000_000;
-export const RULES_VERSION = '2026-11-04.3';
+export const RULES_VERSION = '2026-11-04.4';
 /**
  * テスト運用の大会。審査なしで即参加でき、月の途中からも参加できる。成績は翌月に引き継がない（殿堂にも載せない）。
  * 登録の受け付けは entryOpensAt から。
@@ -35,7 +35,6 @@ export const TEST_SEASONS: Record<string, { entryOpensAt: string }> = {
 };
 export const isTestSeason = (id: string | null | undefined) => !!id && id in TEST_SEASONS;
 export const SANDBOX_SEASON_ID = 'ssn_sandbox';
-export const STRATEGIES = ['contrarian', 'trend', 'technical', 'fundamental', 'defensive'] as const;
 /** 作戦コマンド。オーナーが毎日1つ選ぶ（選ばなければAIが決める）。中身の解釈は各AIに任せる */
 export const TACTICS = ['gangan', 'inochi', 'iroiro'] as const;
 export type Tactic = (typeof TACTICS)[number];

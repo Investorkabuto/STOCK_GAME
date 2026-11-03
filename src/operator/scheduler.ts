@@ -39,13 +39,12 @@ export async function tasksAfterClose(db: D1Database, tradeDate: string, holiday
   return created;
 }
 
-const STRATEGY_JA: Record<string, string> = { contrarian: '逆張り', trend: '順張り', technical: 'テクニカル', fundamental: 'ファンダ', defensive: 'ディフェンシブ' };
 const EXPIRE_JA: Record<string, string> = { insufficient_cash: '資金不足', insufficient_holdings: '保有不足', no_trade: '値付かず', amount_too_small: '金額不足', session_closed: '締切後' };
 
 interface CommentaryPayload {
   trade_date: string;
   timing: Timing;
-  fills: { agent_id: string; display_name: string; side: string; ticker: string; name: string | null; quantity: number; price: number; strategy: string[] }[];
+  fills: { agent_id: string; display_name: string; side: string; ticker: string; name: string | null; quantity: number; price: number }[];
   expired: { agent_id: string; display_name: string; side: string; ticker: string; reason: string | null }[];
   standings: { rank: number; previous_rank: number | null; agent_id: string; display_name: string; month_return_pct: number; total_return_pct: number }[];
   /** その日の作戦（宣言したAIのみ）。chosen_by: owner = オーナーが選んだ、ai = AIが決めた */
@@ -60,13 +59,13 @@ export async function commentaryTask(db: D1Database, tradeDate: string, timing: 
   const fills = (
     await db
       .prepare(
-        `SELECT o.agent_id, g.display_name, o.side, o.ticker, t.name, e.quantity, e.price, o.strategy FROM orders o
+        `SELECT o.agent_id, g.display_name, o.side, o.ticker, t.name, e.quantity, e.price FROM orders o
          JOIN executions e ON e.order_id = o.id JOIN agents g ON g.id = o.agent_id LEFT JOIN tickers t ON t.code = o.ticker
          WHERE o.realm = 'live' AND o.trade_date = ? AND o.timing = ? AND o.status = 'filled' ORDER BY o.received_ms LIMIT 200`,
       )
       .bind(tradeDate, timing)
-      .all<{ agent_id: string; display_name: string; side: string; ticker: string; name: string | null; quantity: number; price: number; strategy: string }>()
-  ).results.map((f) => ({ ...f, strategy: JSON.parse(f.strategy) as string[] }));
+      .all<{ agent_id: string; display_name: string; side: string; ticker: string; name: string | null; quantity: number; price: number }>()
+  ).results;
   const expired = (
     await db
       .prepare(
@@ -123,8 +122,7 @@ export function autoCommentary(p: CommentaryPayload): string[] {
   const label = p.timing === 'open' ? '寄付き' : '引け';
   const lines: string[] = [];
   for (const f of p.fills.slice(0, 6)) {
-    const how = f.strategy.map((s) => STRATEGY_JA[s] ?? s).join('・');
-    lines.push(`${f.display_name} が ${f.ticker}${f.name ? ` ${f.name}` : ''} を${label}で${f.quantity.toLocaleString('ja-JP')}株${f.side === 'buy' ? '買い' : '売り'}（${how}）`);
+    lines.push(`${f.display_name} が ${f.ticker}${f.name ? ` ${f.name}` : ''} を${label}で${f.quantity.toLocaleString('ja-JP')}株${f.side === 'buy' ? '買い' : '売り'}`);
   }
   const lost = p.expired.length;
   if (lost) lines.push(`${label}の注文 ${lost}件 が不成立（${[...new Set(p.expired.map((x) => EXPIRE_JA[x.reason ?? ''] ?? x.reason ?? '失効'))].join('・')}）`);

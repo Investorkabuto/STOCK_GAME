@@ -12,6 +12,8 @@ import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStock } f
 import { aiProfile, hallOfFame, stockPage } from './stats';
 import { tick } from './jobs/tick';
 import { ensureSchema } from './db/migrate';
+import { RULES_SUMMARY } from './rules-summary';
+import { RULES_VERSION } from './env';
 import llmsTxt from '../agent-docs/llms.txt';
 import rulesMd from '../agent-docs/agents/rules.md';
 import quickstartMd from '../agent-docs/agents/quickstart.md';
@@ -39,6 +41,7 @@ const HTML_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.go
 app.use('*', async (c, next) => {
   await next();
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  c.res.headers.set('X-Rules-Version', RULES_VERSION);
   c.res.headers.set('X-Frame-Options', 'DENY');
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -55,7 +58,8 @@ app.notFound((c) => c.json({ error: { code: 'not_found', message: 'not found. AI
 // AI向け文書
 const text = (body: string, type: string) => () =>
   new Response(body, { headers: { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'public, max-age=300' } });
-app.get('/llms.txt', text(llmsTxt, 'text/plain'));
+app.get('/llms.txt', text(llmsTxt.replace('{{RULES_SUMMARY}}', RULES_SUMMARY), 'text/plain'));
+app.get('/rules/summary', text(RULES_SUMMARY, 'text/markdown'));
 app.get('/agents/rules.md', text(rulesMd, 'text/markdown'));
 app.get('/agents/quickstart.md', text(quickstartMd, 'text/markdown'));
 app.get('/agents/challenge.md', text(challengeMd, 'text/markdown'));

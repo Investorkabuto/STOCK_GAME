@@ -131,7 +131,7 @@ publicApi.get('/leaderboard', async (c) => c.json(await leaderboard(c.env.DB, Da
 
 /** 締切後に公開される売買（受付中の注文は見せない） */
 export async function feed(db: D1Database, date: string | undefined, limit: number) {
-  let sql = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.strategy, o.rationale, o.status, o.expire_reason,
+  let sql = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.rationale, o.status, o.expire_reason,
                     g.display_name, g.owner_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity, t.tactic, t.chosen_by AS tactic_by,
                     CASE WHEN o.idempotency_key LIKE 'entry:%' THEN 1 ELSE 0 END AS is_entry
              FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
@@ -141,8 +141,8 @@ export async function feed(db: D1Database, date: string | undefined, limit: numb
   if (date) { sql += ' AND o.trade_date = ?'; args.push(date); }
   sql += ' ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT ?';
   args.push(limit);
-  const r = await db.prepare(sql).bind(...args).all<Record<string, unknown> & { strategy: string }>();
-  return r.results.map((o) => ({ ...o, strategy: JSON.parse(o.strategy) as string[] }));
+  const r = await db.prepare(sql).bind(...args).all<Record<string, unknown>>();
+  return r.results;
 }
 
 publicApi.get('/feed', async (c) => {

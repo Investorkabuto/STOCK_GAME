@@ -29,7 +29,7 @@ export async function currentSeasonId(db: D1Database): Promise<string | null> {
   return (await seasonForDate(db, 'live', jstDate(Date.now())))?.id ?? null;
 }
 
-const PUBLIC_TRADES = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.strategy, o.rationale, o.status, o.expire_reason,
+const PUBLIC_TRADES = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.rationale, o.status, o.expire_reason,
   g.display_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity, t.tactic, t.chosen_by AS tactic_by,
   CASE WHEN o.idempotency_key LIKE 'entry:%' THEN 1 ELSE 0 END AS is_entry
   FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
@@ -57,10 +57,7 @@ export async function aiProfile(db: D1Database, agentId: string) {
   const holdings = current
     ? (await db.prepare('SELECT ticker, quantity FROM holdings WHERE account_id = ? ORDER BY ticker').bind(current.account_id).all<{ ticker: string; quantity: number }>()).results
     : [];
-  const mix = (await db.prepare("SELECT strategy FROM orders WHERE agent_id = ? AND realm = 'live' AND status IN ('locked', 'filled', 'expired')").bind(agentId).all<{ strategy: string }>()).results;
-  const strategyMix: Record<string, number> = {};
-  for (const m of mix) for (const s of JSON.parse(m.strategy) as string[]) strategyMix[s] = (strategyMix[s] ?? 0) + 1;
-  const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.agent_id = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 30`).bind(agentId).all<Record<string, unknown> & { strategy: string }>()).results;
+  const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.agent_id = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 30`).bind(agentId).all<Record<string, unknown>>()).results;
   const adjudications = (await db.prepare("SELECT level, status, reason, published_at FROM adjudications WHERE agent_id = ? AND status IN ('published', 'enforced') ORDER BY published_at DESC").bind(agentId).all()).results;
   const entryCodes = agent.entry_json ? (JSON.parse(agent.entry_json) as { orders: { ticker: string }[] }).orders.map((o) => o.ticker) : [];
   const entry = [];
@@ -87,8 +84,7 @@ export async function aiProfile(db: D1Database, agentId: string) {
       total_return_pct: s.total == null || isTestSeason(s.season_id) ? null : pct((s.total - INITIAL_CASH) / INITIAL_CASH),
     })),
     holdings,
-    strategy_mix: strategyMix,
-    recent_trades: trades.map((t) => ({ ...t, strategy: JSON.parse(t.strategy) as string[] })),
+    recent_trades: trades,
     adjudications,
   };
 }
@@ -96,7 +92,7 @@ export async function aiProfile(db: D1Database, agentId: string) {
 /** 銘柄ページ: その銘柄の売買（締切後に公開されたもの）と、現在の保有AI数 */
 export async function stockPage(db: D1Database, ticker: string) {
   const info = await db.prepare('SELECT code, name, market FROM tickers WHERE code = ?').bind(ticker).first<{ code: string; name: string; market: string }>();
-  const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.ticker = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 50`).bind(ticker).all<Record<string, unknown> & { strategy: string }>()).results;
+  const trades = (await db.prepare(`${PUBLIC_TRADES} AND o.ticker = ? ORDER BY o.trade_date DESC, o.received_ms DESC LIMIT 50`).bind(ticker).all<Record<string, unknown>>()).results;
   if (!info && trades.length === 0) return null;
   const holders = await db
     .prepare("SELECT COUNT(DISTINCT a.agent_id) AS n FROM holdings h JOIN accounts a ON a.id = h.account_id JOIN seasons s ON s.id = a.season_id WHERE s.realm = 'live' AND s.status = 'running' AND h.ticker = ?")
@@ -109,6 +105,6 @@ export async function stockPage(db: D1Database, ticker: string) {
     market: info?.market ?? null,
     last_close: last,
     holders: holders?.n ?? 0,
-    trades: trades.map((t) => ({ ...t, strategy: JSON.parse(t.strategy) as string[] })),
+    trades,
   };
 }

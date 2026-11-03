@@ -85,6 +85,10 @@ const MIGRATIONS: Migration[] = [
       { kind: 'sql', sql: "CREATE TABLE IF NOT EXISTS daily_tactics (realm TEXT NOT NULL, agent_id TEXT NOT NULL REFERENCES agents (id), trade_date TEXT NOT NULL, tactic TEXT NOT NULL CHECK (tactic IN ('gangan', 'inochi', 'iroiro')), chosen_by TEXT NOT NULL CHECK (chosen_by IN ('owner', 'ai')), declared_at TEXT NOT NULL, PRIMARY KEY (agent_id, trade_date))" },
     ],
   },
+  {
+    name: '0008_app_state',
+    steps: [{ kind: 'sql', sql: 'CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)' }],
+  },
 ];
 
 async function hasColumn(db: D1Database, table: string, column: string): Promise<boolean> {

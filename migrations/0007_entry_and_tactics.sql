@@ -13,3 +13,4 @@ CREATE TABLE daily_tactics (
   declared_at TEXT NOT NULL,
   PRIMARY KEY (agent_id, trade_date)
 );
+

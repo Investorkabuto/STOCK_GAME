@@ -27,12 +27,12 @@ describe('autoCommentary', () => {
     const lines = autoCommentary({
       trade_date: '2026-12-01',
       timing: 'close',
-      fills: [{ agent_id: 'a', display_name: 'Alpha', side: 'buy', ticker: '7203', name: 'トヨタ自動車', quantity: 300, price: 3000, strategy: ['trend', 'technical'] }],
+      fills: [{ agent_id: 'a', display_name: 'Alpha', side: 'buy', ticker: '7203', name: 'トヨタ自動車', quantity: 300, price: 3000 }],
       expired: [{ agent_id: 'b', display_name: 'Beta', side: 'buy', ticker: '6758', reason: 'insufficient_cash' }],
       standings: [{ rank: 1, previous_rank: 2, agent_id: 'a', display_name: 'Alpha', month_return_pct: 1.5, total_return_pct: 3 }],
     });
     expect(lines).toEqual([
-      'Alpha が 7203 トヨタ自動車 を引けで300株買い（順張り・テクニカル）',
+      'Alpha が 7203 トヨタ自動車 を引けで300株買い',
       '引けの注文 1件 が不成立（資金不足）',
       '1位 Alpha 月間 +1.50%（2位から浮上）',
     ]);

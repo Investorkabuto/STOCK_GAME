@@ -8,7 +8,6 @@ export interface EntryOrder {
   ticker: string;
   quantity: number | null;
   amount: number | null;
-  strategy: string[];
   rationale: string;
 }
 
@@ -67,7 +66,7 @@ export async function placeEntries(db: D1Database, nowMs: number, agentId?: stri
             `INSERT INTO orders (id, account_id, agent_id, realm, trade_date, timing, side, ticker, quantity, amount, strategy, rationale, status, idempotency_key, received_at, received_ms, updated_at)
              VALUES (?, ?, ?, ?, ?, 'open', 'buy', ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?)`,
           )
-          .bind(id, acc.id, a.id, a.realm, tradeDate, o.ticker, o.quantity, o.amount, JSON.stringify(o.strategy), o.rationale, `entry:${o.ticker}`, now, nowMs, now),
+          .bind(id, acc.id, a.id, a.realm, tradeDate, o.ticker, o.quantity, o.amount, '[]', o.rationale, `entry:${o.ticker}`, now, nowMs, now),
         eventStatement(db, a.id, 'order.accepted', { order_id: id, ticker: o.ticker, side: 'buy', timing: 'open', trade_date: tradeDate, entry: true }, nowMs),
       );
     }

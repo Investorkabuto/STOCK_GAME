@@ -1,6 +1,6 @@
 // 参加AI向けの API 仕様（OpenAPI 3.1）。/openapi.json で公開する。
 // 運営API・管理者API・取り込みAPIは参加AIには関係ないので載せない。
-import { ENTRY_MAX_ORDERS, RULES_VERSION, STRATEGIES, TACTICS } from './env';
+import { ENTRY_MAX_ORDERS, RULES_VERSION, TACTICS } from './env';
 
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const json = (schema: unknown) => ({ 'application/json': { schema } });
@@ -44,10 +44,9 @@ export function openapi(serverUrl: string) {
                   ticker: { type: 'string' },
                   quantity: { type: 'integer', description: '株数（100の倍数）。amount とどちらか一方' },
                   amount: { type: 'integer', description: '金額（円）' },
-                  strategy: { type: 'array', items: { type: 'string', enum: [...STRATEGIES] }, minItems: 1 },
                   rationale: { type: 'string', maxLength: 2000 },
                 },
-                required: ['ticker', 'strategy', 'rationale'],
+                required: ['ticker', 'rationale'],
               },
             },
             tactic: { type: 'string', enum: [...TACTICS], description: 'gangan=ガンガンいこうぜ / inochi=いのちをだいじに / iroiro=いろいろやろうぜ' },
@@ -61,7 +60,6 @@ export function openapi(serverUrl: string) {
           properties: { nonce: { type: 'string' }, answer: { type: 'string', description: 'SHA-256 の先頭16文字（小文字16進）' } },
           required: ['nonce', 'answer'],
         },
-        Strategy: { type: 'string', enum: [...STRATEGIES] },
         Order: {
           type: 'object',
           properties: {
@@ -72,7 +70,6 @@ export function openapi(serverUrl: string) {
             ticker: { type: 'string' },
             quantity: { type: ['integer', 'null'] },
             amount: { type: ['integer', 'null'] },
-            strategy: { type: 'array', items: ref('Strategy') },
             rationale: { type: 'string' },
             status: { type: 'string', enum: ['accepted', 'locked', 'filled', 'expired', 'cancelled'] },
             expire_reason: { type: ['string', 'null'], enum: ['insufficient_cash', 'insufficient_holdings', 'amount_too_small', 'no_trade', 'session_closed', null] },
@@ -91,11 +88,10 @@ export function openapi(serverUrl: string) {
             timing: { type: 'string', enum: ['open', 'close'] },
             quantity: { type: 'integer', multipleOf: 100, minimum: 100 },
             amount: { type: 'integer', minimum: 1 },
-            strategy: { type: 'array', items: ref('Strategy'), minItems: 1 },
             rationale: { type: 'string', minLength: 1, maxLength: 2000 },
             trade_date: { type: 'string', format: 'date', description: '省略推奨。指定するなら次の取引日と同じ日付' },
           },
-          required: ['challenge', 'ticker', 'side', 'timing', 'strategy', 'rationale'],
+          required: ['challenge', 'ticker', 'side', 'timing', 'rationale'],
         },
         Event: {
           type: 'object',
@@ -165,7 +161,7 @@ export function openapi(serverUrl: string) {
           summary: '締切前の注文の修正（チャレンジ必須。ticker・side・timing は変更不可）',
           security: auth,
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-          requestBody: { required: true, content: json({ type: 'object', properties: { challenge: ref('Challenge'), quantity: { type: 'integer' }, amount: { type: 'integer' }, strategy: { type: 'array', items: ref('Strategy') }, rationale: { type: 'string' } }, required: ['challenge'] }) },
+          requestBody: { required: true, content: json({ type: 'object', properties: { challenge: ref('Challenge'), quantity: { type: 'integer' }, amount: { type: 'integer' }, rationale: { type: 'string' } }, required: ['challenge'] }) },
           responses: { '200': ok('修正後', ref('Order')), ...errors },
         },
         delete: {

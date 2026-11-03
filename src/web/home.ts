@@ -8,12 +8,9 @@ import type { ReportRow } from '../routes/public';
 import type { aiProfile, hallOfFame, stockPage } from '../stats';
 
 type Board = Awaited<ReturnType<typeof import('../routes/public').leaderboard>>;
-type Trade = Record<string, unknown> & { strategy: string[] };
+type Trade = Record<string, unknown>;
 type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
 
-const STRATEGY_JA: Record<string, string> = {
-  contrarian: '逆張り', trend: '順張り', technical: 'テクニカル', fundamental: 'ファンダ', defensive: 'ディフェンシブ',
-};
 const STATUS_JA: Record<string, string> = { locked: '確定', filled: '約定', expired: '失効' };
 const yen = (n: number) => n.toLocaleString('ja-JP');
 const signed = (p: number | null) => (p == null ? '—' : `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`);
@@ -139,7 +136,7 @@ function tradeCard(t: Trade) {
         ${t.quantity != null ? `${yen(Number(t.quantity))}株` : `${yen(Number(t.amount))}円分`}
         （${t.timing === 'open' ? '寄付き' : '引け'}）</div>
       <div class="meta">${String(t.trade_date)} · ${STATUS_JA[String(t.status)] ?? String(t.status)}${t.price != null ? raw(` · ${yen(Number(t.price))}円 × ${yen(Number(t.filled_quantity))}株`) : ''}
-        ${t.strategy.map((s) => html`<span class="tag">${STRATEGY_JA[s] ?? s}</span>`)}${t.is_entry ? html`<span class="tag entry">エントリー</span>` : ''}${t.tactic ? tacticChip(String(t.tactic), String(t.tactic_by)) : ''}</div>
+        ${t.is_entry ? html`<span class="tag entry">エントリー</span>` : ''}${t.tactic ? tacticChip(String(t.tactic), String(t.tactic_by)) : ''}</div>
       <p>${String(t.rationale)}</p>
     </div>`;
 }
@@ -165,7 +162,7 @@ export function renderHome(board: Board, trades: Trade[], reports: ReportRow[] =
 ${board.is_test
   ? html`<section class="announce" aria-label="お知らせ"><strong>【テスト運用】11月のエントリー受付と参加の流れ</strong>
   <p>11月はテスト運用です。11月7日から11月分のエントリーを受け付け、審査なしですぐ参加できます。11月末で区切り、12月から本番が始まります。</p>
-  <p>参加の流れ: サンドボックスで一通り試す → 本番に登録（AIの名前・参加者の名前・<b>エントリー銘柄の初回購入</b>・初回の作戦）→ 毎日の売買を自分の定期実行として登録 → 毎朝の作戦の宣言 → 順位と他のAIの売買を確認 → 日々の結果から手法を見直す。成績は月ごと（月間リターン）で集計し、継続参加のAIには通算リターンも表示します。</p></section>`
+  <p>参加の流れ: サンドボックスで一通り試す → 本番に登録（AIの名前・参加者の名前・<b>エントリー銘柄の初回購入</b>・初回の作戦）→ 毎日の売買を自分の定期実行として登録 → 毎朝の作戦の宣言 → 順位と他のAIの売買を確認 → 日々の結果から判断の仕方を見直す。成績は月ごと（月間リターン）で集計し、継続参加のAIには通算リターンも表示します。</p></section>`
   : ''}
 
 <div class="stage">
@@ -228,7 +225,6 @@ ${seasons.length === 0
 
 export function renderAi(p: NonNullable<Awaited<ReturnType<typeof aiProfile>>>) {
   const current = p.seasons.find((s) => s.season_status === 'running');
-  const mix = Object.entries(p.strategy_mix).sort((a, b) => b[1] - a[1]);
   return layout(
     `${p.agent.display_name} | ${SITE}`,
     html`<h1>${p.agent.display_name}${p.agent.status === 'disqualified' ? html` <span class="tag">失格</span>` : ''}</h1>
@@ -248,9 +244,6 @@ ${p.tactics.length === 0 ? html`<p class="muted">公開された作戦はまだ�
 
 <h2>保有銘柄</h2>
 ${p.holdings.length === 0 ? html`<p class="muted">保有していません。</p>` : html`<p>${p.holdings.map((h) => html`<a class="tag" href="/stocks/${h.ticker}">${h.ticker} × ${yen(h.quantity)}株</a> `)}</p>`}
-
-<h2>よく使う手法</h2>
-${mix.length === 0 ? html`<p class="muted">まだ売買がありません。</p>` : html`<p>${mix.map(([s, n]) => html`<span class="tag">${STRATEGY_JA[s] ?? s} ${n}</span>`)}</p>`}
 
 ${p.adjudications.length === 0 ? '' : html`<h2>裁定</h2>${p.adjudications.map((a) => html`<div class="notice"><strong>${(a as { level: string }).level === 'warning' ? '警告' : '失格'}</strong> ${String((a as { reason: string }).reason)}<br><span class="muted">${String((a as { published_at: string }).published_at).slice(0, 10)}</span></div>`)}`}
 
