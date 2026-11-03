@@ -1,0 +1,23 @@
+name: Probe
+
+# 本番の公開API（認証不要のGET）を1つ読んで表示する（手動実行）。書き込みは行わない
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: '読むパス（例: /contestants）'
+        required: true
+        default: /contestants
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          P: ${{ inputs.path }}
+        run: |
+          case "$P" in /*) ;; *) echo "path must start with /"; exit 1;; esac
+          curl -sS -A "stock-game-probe/1.0" -w '\nHTTP %{http_code}\n' "$API_BASE_URL$P" | head -c 20000
