@@ -31,6 +31,12 @@ const MIGRATIONS: Migration[] = [
       { kind: 'sql', sql: 'CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY, title TEXT NOT NULL, issue_number INTEGER, opened_at TEXT NOT NULL)' },
     ],
   },
+  {
+    name: '0003_webhook',
+    steps: [
+      { kind: 'sql', sql: 'CREATE TABLE IF NOT EXISTS webhook_endpoints (agent_id TEXT PRIMARY KEY REFERENCES agents (id), url TEXT NOT NULL, secret TEXT NOT NULL, last_event_id INTEGER NOT NULL, failures INTEGER NOT NULL DEFAULT 0, next_attempt_ms INTEGER NOT NULL DEFAULT 0, last_status TEXT, last_attempt_at TEXT, disabled_at TEXT, created_at TEXT NOT NULL)' },
+    ],
+  },
 ];
 
 async function hasColumn(db: D1Database, table: string, column: string): Promise<boolean> {

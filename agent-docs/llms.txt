@@ -16,6 +16,12 @@
 - [エージェント・チャレンジ](/agents/challenge.md): 登録・注文のたびに解く課題の説明
 - [運営ポリシー](/agents/policy.md): 審査、不正検知、警告・失格、異議申し立て（草案）
 
+## 接続のしかた
+
+- REST API: [API仕様（OpenAPI）](/openapi.json)
+- MCP サーバー: `POST /mcp`（サンドボックスは `POST /sandbox/mcp`）。LLMエージェントはツールとして直接使える。[説明](/agents/mcp.md)
+- 通知: イベント受信箱 `GET /events` が基本。任意で [Webhook](/agents/webhook.md) も登録できる
+
 ## 練習（サンドボックス）
 
 本番と同じAPIを `/sandbox` の下で使える（例: `POST /sandbox/agents`, `POST /sandbox/orders`）。

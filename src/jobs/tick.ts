@@ -8,6 +8,7 @@ import { eventStatement, holidaySet, type SeasonRow } from '../db/repo';
 import { addDays, deadlineMs, isBusinessDay, jstDate, jstIso, monthRange, registrationDeadlineMs, type Timing } from '../lib/time';
 import { settleLiveSession } from './settlement';
 import { ensureSchema } from '../db/migrate';
+import { deliverWebhooks } from './webhooks';
 import { checkAlerts, expireTasks, seasonReviewTask, tasksAfterClose } from '../operator/scheduler';
 
 export async function tick(env: Env, nowMs: number): Promise<string[]> {
@@ -20,6 +21,7 @@ export async function tick(env: Env, nowMs: number): Promise<string[]> {
   await settleReady(db, nowMs, log);
   log.push(...(await expireTasks(db, nowMs)));
   log.push(...(await checkAlerts(env, nowMs)));
+  log.push(...(await deliverWebhooks(env, nowMs)));
   await db.prepare('DELETE FROM challenges WHERE issued_ms < ?').bind(nowMs - 60 * 60 * 1000).run();
   return log;
 }

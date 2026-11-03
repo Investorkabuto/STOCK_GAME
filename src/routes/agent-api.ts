@@ -9,6 +9,8 @@ import { ApiError, bearer, readJson } from '../lib/http';
 import { addDays, deadlineMs, jstDate, jstIso, monthRange, nextEligibleTradeDate, registrationDeadlineMs, type Timing } from '../lib/time';
 import { settleSandbox } from '../jobs/settlement';
 import { ipPrefixHash } from '../lib/ip';
+import { validateWebhookUrl } from '../lib/webhook';
+import { postWebhook } from '../jobs/webhooks';
 import { createTaskStatement, fileAppeal } from '../operator/core';
 
 type Vars = { agent: AgentRow; now: number };
@@ -347,6 +349,51 @@ export function agentApi(realm: Realm) {
       orders: orders.results.map((o) => formatOrder(o, o.e_price == null ? null : { price: o.e_price, quantity: o.e_quantity!, amount: o.e_amount! })),
       snapshot: snap ?? null,
     });
+  });
+
+  // ---- Webhook（任意） ----
+  app.get('/webhook', anyAgent, async (c) => {
+    const w = await c.env.DB.prepare('SELECT url, last_event_id, failures, last_status, last_attempt_at, disabled_at, created_at FROM webhook_endpoints WHERE agent_id = ?')
+      .bind(c.get('agent').id).first();
+    return c.json({ webhook: w ?? null });
+  });
+
+  app.put('/webhook', anyAgent, async (c) => {
+    const b = await readJson(c);
+    const url = typeof b.url === 'string' ? b.url.trim() : '';
+    const invalid = validateWebhookUrl(url, c.env.ALLOW_HTTP_WEBHOOKS === '1');
+    if (invalid) throw new ApiError(400, 'validation_failed', invalid);
+    const agent = c.get('agent');
+    const now = c.get('now');
+    const secret = `whsec_${randomToken(32)}`;
+    // 登録した時点以降のイベントから届ける（過去のイベントは GET /events で取得する）
+    const last = await c.env.DB.prepare('SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE agent_id = ?').bind(agent.id).first<{ id: number }>();
+    await c.env.DB.prepare(
+      `INSERT INTO webhook_endpoints (agent_id, url, secret, last_event_id, failures, next_attempt_ms, created_at) VALUES (?, ?, ?, ?, 0, 0, ?)
+       ON CONFLICT (agent_id) DO UPDATE SET url = excluded.url, secret = excluded.secret, last_event_id = excluded.last_event_id,
+         failures = 0, next_attempt_ms = 0, last_status = NULL, last_attempt_at = NULL, disabled_at = NULL`,
+    ).bind(agent.id, url, secret, last?.id ?? 0, jstIso(now)).run();
+    return c.json({
+      url,
+      secret,
+      note: 'secret はこの応答でしか表示されません。通知の署名の確認に使います（/agents/webhook.md）。通知は最大5分ごとにまとめて届きます',
+    });
+  });
+
+  app.delete('/webhook', anyAgent, async (c) => {
+    const r = await c.env.DB.prepare('DELETE FROM webhook_endpoints WHERE agent_id = ?').bind(c.get('agent').id).run();
+    if (r.meta.changes === 0) throw new ApiError(404, 'not_found', 'Webhook は登録されていません');
+    return c.json({ deleted: true });
+  });
+
+  /** 署名の確認用に、テストのイベントを今すぐ1件送る（受信箱には残らない） */
+  app.post('/webhook/test', anyAgent, async (c) => {
+    const agent = c.get('agent');
+    const w = await c.env.DB.prepare('SELECT url, secret FROM webhook_endpoints WHERE agent_id = ?').bind(agent.id).first<{ url: string; secret: string }>();
+    if (!w) throw new ApiError(404, 'not_found', '先に PUT /webhook で通知先を登録してください');
+    const now = c.get('now');
+    const err = await postWebhook(w.url, w.secret, agent.id, [{ id: 0, type: 'webhook.test', created_at: jstIso(now), data: { message: 'これはテスト通知です' } }], now);
+    return c.json({ delivered: err === null, error: err });
   });
 
   // ---- 異議申し立て（本番のみ。失格したAIも使える） ----
