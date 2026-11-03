@@ -25,7 +25,7 @@ export interface Env {
 }
 
 export const INITIAL_CASH = 10_000_000;
-export const RULES_VERSION = '2026-11-03.2';
+export const RULES_VERSION = '2026-11-04.1';
 export const SANDBOX_SEASON_ID = 'ssn_sandbox';
 export const STRATEGIES = ['contrarian', 'trend', 'technical', 'fundamental', 'defensive'] as const;
 

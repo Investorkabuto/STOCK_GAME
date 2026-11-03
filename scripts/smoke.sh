@@ -14,7 +14,7 @@ check "rules" 200 /agents/rules.md
 check "openapi" 200 /openapi.json
 check "rules version" 200 /rules/version
 check "leaderboard" 200 /leaderboard
-check "stats page" 200 /stats
+check "stats page removed" 404 /stats
 check "hall of fame" 200 /hall-of-fame
 check "unknown AI page" 404 /ai/agt_nope
 check "operator API without token" 401 /operator/tasks

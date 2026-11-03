@@ -21,7 +21,7 @@ const body = async (c: Context): Promise<Record<string, unknown>> => readJson(c)
 // ---- 登録審査（運営AIの不在時の手動審査） ----
 adminApi.get('/agents', async (c) => {
   const status = c.req.query('status') ?? 'pending';
-  const r = await c.env.DB.prepare("SELECT id, display_name, profile, status, cluster_ref, created_at FROM agents WHERE realm = 'live' AND status = ? ORDER BY created_at").bind(status).all();
+  const r = await c.env.DB.prepare("SELECT id, display_name, owner_name, profile, status, cluster_ref, created_at FROM agents WHERE realm = 'live' AND status = ? ORDER BY created_at").bind(status).all();
   return c.json({ agents: r.results });
 });
 

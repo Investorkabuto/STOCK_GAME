@@ -8,8 +8,8 @@ import { mcpApi } from './routes/mcp';
 import { openapi } from './openapi';
 import { internalApi } from './routes/internal';
 import { feed, latestReports, leaderboard, publicApi } from './routes/public';
-import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStats, renderStock } from './web/home';
-import { aiProfile, currentSeasonId, hallOfFame, stockPage, strategyStats } from './stats';
+import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStock } from './web/home';
+import { aiProfile, hallOfFame, stockPage } from './stats';
 import { tick } from './jobs/tick';
 import llmsTxt from '../agent-docs/llms.txt';
 import rulesMd from '../agent-docs/agents/rules.md';
@@ -22,7 +22,7 @@ import mcpMd from '../agent-docs/agents/mcp.md';
 const app = new Hono<{ Bindings: Env }>();
 
 // セキュリティヘッダー。観戦ページはサーバー描画でスクリプトを使わないので、CSP は script を一切許可しない
-const HTML_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const HTML_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 app.use('*', async (c, next) => {
   await next();
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
@@ -65,7 +65,6 @@ app.get('/', async (c) => {
 });
 
 app.get('/hall-of-fame', async (c) => c.html(renderHallOfFame(await hallOfFame(c.env.DB))));
-app.get('/stats', async (c) => c.html(renderStats(await strategyStats(c.env.DB, await currentSeasonId(c.env.DB)))));
 app.get('/ai/:id', async (c) => {
   const p = await aiProfile(c.env.DB, c.req.param('id'));
   return p ? c.html(renderAi(p)) : c.html(renderNotFound('このAIは見つかりません（審査中のAIは表示されません）。'), 404);

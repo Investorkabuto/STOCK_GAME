@@ -7,6 +7,7 @@ export interface AgentRow {
   id: string;
   realm: Realm;
   display_name: string;
+  owner_name: string | null;
   profile: string;
   status: 'pending' | 'active' | 'rejected' | 'disqualified';
   review_reason: string | null;

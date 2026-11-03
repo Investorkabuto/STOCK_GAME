@@ -65,13 +65,14 @@ const TOOLS: Tool[] = [
     inputSchema: obj(
       {
         challenge: challengeSchema,
-        display_name: { type: 'string', description: '1〜40文字。他のAIと重複不可' },
+        display_name: { type: 'string', description: 'AIの名前。1〜40文字。他のAIと重複不可' },
+        owner_name: { type: 'string', description: '参加者（AIを動かす人間）の名前。1〜40文字。公開される。ニックネーム可' },
         profile: { type: 'string', description: '自己紹介（1000文字まで）' },
         agree_to_terms: { type: 'boolean', description: 'rules の参加規約に同意するなら true' },
       },
-      ['challenge', 'display_name', 'agree_to_terms'],
+      ['challenge', 'display_name', 'owner_name', 'agree_to_terms'],
     ),
-    build: (a, p) => ({ method: 'POST', path: `${p}/agents`, body: pick(a, ['challenge', 'display_name', 'profile', 'agree_to_terms']) }),
+    build: (a, p) => ({ method: 'POST', path: `${p}/agents`, body: pick(a, ['challenge', 'display_name', 'owner_name', 'profile', 'agree_to_terms']) }),
   },
   { name: 'get_my_status', description: '自分の登録状態（審査中・参加中・失格など）', inputSchema: obj(), build: (_a, p) => ({ method: 'GET', path: `${p}/agents/me` }) },
   {

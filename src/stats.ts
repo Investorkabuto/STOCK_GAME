@@ -1,5 +1,5 @@
 // 観戦用の集計: 殿堂、手法別の成績、AIプロフィール、銘柄ページ
-import { INITIAL_CASH, STRATEGIES } from './env';
+import { INITIAL_CASH } from './env';
 import { lastCloses, seasonForDate } from './db/repo';
 import { jstDate } from './lib/time';
 
@@ -13,75 +13,16 @@ export async function hallOfFame(db: D1Database) {
     const top = (
       await db
         .prepare(
-          `SELECT d.rank, g.display_name, g.id AS agent_id, d.total FROM accounts a JOIN agents g ON g.id = a.agent_id
+          `SELECT d.rank, g.display_name, g.owner_name, g.id AS agent_id, d.total FROM accounts a JOIN agents g ON g.id = a.agent_id
            JOIN daily_snapshots d ON d.account_id = a.id AND d.trade_date = (SELECT MAX(trade_date) FROM daily_snapshots WHERE account_id = a.id)
            WHERE a.season_id = ? AND d.rank BETWEEN 1 AND 3 ORDER BY d.rank`,
         )
         .bind(s.id)
-        .all<{ rank: number; display_name: string; agent_id: string; total: number }>()
+        .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number }>()
     ).results;
     out.push({ season_id: s.id, starts_on: s.starts_on, ends_on: s.ends_on, top: top.map((t) => ({ ...t, return_pct: pct((t.total - INITIAL_CASH) / INITIAL_CASH) })) });
   }
   return out;
-}
-
-interface FilledRow {
-  id: string;
-  agent_id: string;
-  ticker: string;
-  side: 'buy' | 'sell';
-  strategy: string;
-  trade_date: string;
-  received_ms: number;
-  timing: string;
-  price: number;
-}
-
-/**
- * 手法別の成績。買いの約定ごとに「出口の価格」と比べる:
- * 同じAIがその後同じ銘柄を売っていればその売値、まだ持っていれば直近の終値。出口が買値を上回れば勝ち。
- * 複数の手法を選んだ注文は、それぞれの手法に1件として数える。
- */
-export async function strategyStats(db: D1Database, seasonId: string | null) {
-  if (!seasonId) return { season_id: null, strategies: [] };
-  const rows = (
-    await db
-      .prepare(
-        `SELECT o.id, o.agent_id, o.ticker, o.side, o.strategy, o.trade_date, o.received_ms, o.timing, e.price
-         FROM orders o JOIN executions e ON e.order_id = o.id JOIN accounts a ON a.id = o.account_id
-         WHERE a.season_id = ? AND o.status = 'filled'
-         ORDER BY o.trade_date, CASE o.timing WHEN 'open' THEN 0 ELSE 1 END, CASE o.side WHEN 'sell' THEN 0 ELSE 1 END, o.received_ms`,
-      )
-      .bind(seasonId)
-      .all<FilledRow>()
-  ).results;
-  const today = jstDate(Date.now());
-  const closes = await lastCloses(db, [...new Set(rows.map((r) => r.ticker))], today);
-  const acc = new Map<string, { entries: number; wins: number; returnSum: number; evaluated: number }>(STRATEGIES.map((s) => [s, { entries: 0, wins: 0, returnSum: 0, evaluated: 0 }]));
-  rows.forEach((r, i) => {
-    if (r.side !== 'buy') return;
-    const exit = rows.slice(i + 1).find((x) => x.side === 'sell' && x.agent_id === r.agent_id && x.ticker === r.ticker)?.price ?? closes.get(r.ticker);
-    for (const s of JSON.parse(r.strategy) as string[]) {
-      const a = acc.get(s);
-      if (!a) continue;
-      a.entries++;
-      if (exit === undefined) continue;
-      const ret = (exit - r.price) / r.price;
-      a.evaluated++;
-      a.returnSum += ret;
-      if (ret > 0) a.wins++;
-    }
-  });
-  return {
-    season_id: seasonId,
-    method: '買いの約定ごとに、その後の同じ銘柄の売値（未売却なら直近の終値）と比べる。複数の手法を選んだ注文はそれぞれに数える',
-    strategies: [...acc].map(([strategy, a]) => ({
-      strategy,
-      buy_entries: a.entries,
-      win_rate_pct: a.evaluated ? pct(a.wins / a.evaluated) : null,
-      avg_return_pct: a.evaluated ? pct(a.returnSum / a.evaluated) : null,
-    })),
-  };
 }
 
 export async function currentSeasonId(db: D1Database): Promise<string | null> {
@@ -96,9 +37,9 @@ const PUBLIC_TRADES = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.
 /** AIプロフィール（本番のAIのみ。審査中・却下は表示しない） */
 export async function aiProfile(db: D1Database, agentId: string) {
   const agent = await db
-    .prepare("SELECT id, display_name, profile, status, created_at FROM agents WHERE id = ? AND realm = 'live' AND status IN ('active', 'disqualified')")
+    .prepare("SELECT id, display_name, owner_name, profile, status, created_at FROM agents WHERE id = ? AND realm = 'live' AND status IN ('active', 'disqualified')")
     .bind(agentId)
-    .first<{ id: string; display_name: string; profile: string; status: string; created_at: string }>();
+    .first<{ id: string; display_name: string; owner_name: string | null; profile: string; status: string; created_at: string }>();
   if (!agent) return null;
   const seasons = (
     await db

@@ -183,7 +183,7 @@
 
 payload:
 ```json
-{ "agent_id": "agt_...", "display_name": "...", "profile": "...", "challenge_passed": true,
+{ "agent_id": "agt_...", "display_name": "...", "owner_name": "...", "profile": "...", "challenge_passed": true,
   "terms_agreed_at": "...", "cluster_ref": "cls_7f3a",
   "duplicate_flags": [] }
 ```

@@ -4,7 +4,7 @@ import { RULES_VERSION, type Env } from '../env';
 import { holidaySet, seasonForDate } from '../db/repo';
 import { addDays, isBusinessDay, jstDate } from '../lib/time';
 import { enforceRateLimit } from '../lib/http';
-import { aiProfile, currentSeasonId, hallOfFame, stockPage, strategyStats } from '../stats';
+import { aiProfile, hallOfFame, stockPage } from '../stats';
 
 export const publicApi = new Hono<{ Bindings: Env }>();
 
@@ -18,7 +18,7 @@ for (const path of ['/leaderboard', '/feed', '/calendar', '/tickers', '/reports'
 
 export async function leaderboard(db: D1Database, nowMs: number) {
   const season = await seasonForDate(db, 'live', jstDate(nowMs));
-  if (!season) return { season_id: null, as_of: null, rows: [] as { rank: number; display_name: string; agent_id: string; total: number; return_pct: number }[] };
+  if (!season) return { season_id: null, as_of: null, rows: [] as { rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number; return_pct: number }[] };
   const asOf = await db
     .prepare('SELECT MAX(d.trade_date) AS d FROM daily_snapshots d JOIN accounts a ON a.id = d.account_id WHERE a.season_id = ?')
     .bind(season.id)
@@ -26,12 +26,12 @@ export async function leaderboard(db: D1Database, nowMs: number) {
   if (!asOf?.d) return { season_id: season.id, as_of: null, rows: [] };
   const r = await db
     .prepare(
-      `SELECT d.rank, g.display_name, g.id AS agent_id, d.total FROM daily_snapshots d
+      `SELECT d.rank, g.display_name, g.owner_name, g.id AS agent_id, d.total FROM daily_snapshots d
        JOIN accounts a ON a.id = d.account_id JOIN agents g ON g.id = a.agent_id
        WHERE a.season_id = ? AND d.trade_date = ? AND d.rank > 0 ORDER BY d.rank`,
     )
     .bind(season.id, asOf.d)
-    .all<{ rank: number; display_name: string; agent_id: string; total: number }>();
+    .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number }>();
   return {
     season_id: season.id,
     as_of: asOf.d,
@@ -44,7 +44,7 @@ publicApi.get('/leaderboard', async (c) => c.json(await leaderboard(c.env.DB, Da
 /** 締切後に公開される売買（受付中の注文は見せない） */
 export async function feed(db: D1Database, date: string | undefined, limit: number) {
   let sql = `SELECT o.id, o.trade_date, o.timing, o.side, o.ticker, o.quantity, o.amount, o.strategy, o.rationale, o.status, o.expire_reason,
-                    g.display_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity
+                    g.display_name, g.owner_name, g.id AS agent_id, e.price, e.quantity AS filled_quantity
              FROM orders o JOIN agents g ON g.id = o.agent_id LEFT JOIN executions e ON e.order_id = o.id
              WHERE o.realm = 'live' AND o.status IN ('locked', 'filled', 'expired')`;
   const args: unknown[] = [];
@@ -119,7 +119,6 @@ publicApi.get('/reports/:id', async (c) => {
 
 // ---- 観戦用の集計（JSON）。HTMLのページは index.ts ----
 publicApi.get('/api/hall-of-fame', async (c) => c.json({ seasons: await hallOfFame(c.env.DB) }));
-publicApi.get('/api/stats/strategies', async (c) => c.json(await strategyStats(c.env.DB, c.req.query('season_id') ?? (await currentSeasonId(c.env.DB)))));
 publicApi.get('/api/ai/:id', async (c) => {
   const p = await aiProfile(c.env.DB, c.req.param('id'));
   return p ? c.json(p) : c.json({ error: { code: 'not_found', message: 'AI not found' } }, 404);
