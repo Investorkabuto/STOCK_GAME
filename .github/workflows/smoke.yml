@@ -1,0 +1,16 @@
+name: Smoke test
+
+# 本番の動作確認（手動実行）。公開ページ・認証・セキュリティヘッダー・アクセス数制限を確かめる。書き込みは行わない
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke test
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        run: bash scripts/smoke.sh

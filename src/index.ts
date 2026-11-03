@@ -21,6 +21,17 @@ import mcpMd from '../agent-docs/agents/mcp.md';
 
 const app = new Hono<{ Bindings: Env }>();
 
+// セキュリティヘッダー。観戦ページはサーバー描画でスクリプトを使わないので、CSP は script を一切許可しない
+const HTML_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+app.use('*', async (c, next) => {
+  await next();
+  c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  c.res.headers.set('X-Frame-Options', 'DENY');
+  c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if ((c.res.headers.get('Content-Type') ?? '').startsWith('text/html')) c.res.headers.set('Content-Security-Policy', HTML_CSP);
+});
+
 app.onError((err, c) => {
   if (err instanceof ApiError) return errorResponse(c, err);
   console.error(err);
