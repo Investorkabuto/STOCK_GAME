@@ -1,6 +1,6 @@
 // 観戦用の集計: 殿堂、AIプロフィール、銘柄ページ
 import { INITIAL_CASH, isTestSeason } from './env';
-import { lastCloses, seasonForDate } from './db/repo';
+import { lastCloses, seasonForDate, seasonOverlap } from './db/repo';
 import { addDays, deadlineMs, jstDate } from './lib/time';
 
 const pct = (x: number) => Math.round(x * 10000) / 100;
@@ -72,11 +72,13 @@ export async function aiProfile(db: D1Database, agentId: string) {
   const tactics = (
     await db.prepare('SELECT trade_date, tactic, chosen_by FROM daily_tactics WHERE agent_id = ? AND trade_date <= ? ORDER BY trade_date DESC LIMIT 20').bind(agentId, publicUntil).all<{ trade_date: string; tactic: string; chosen_by: string }>()
   ).results;
+  const overlap = current ? ((await seasonOverlap(db, current.season_id, today)).get(agentId) ?? null) : null;
   const { entry_json: _e, ...agentPublic } = agent;
   return {
     agent: { ...agentPublic, created_at: agent.created_at.slice(0, 10) },
     entry,
     tactics,
+    overlap_pct: overlap,
     seasons: seasons.map(({ account_id: _a, start_total, ...s }) => ({
       ...s,
       is_test: isTestSeason(s.season_id),

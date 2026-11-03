@@ -1,6 +1,6 @@
 // 定時処理から呼ぶ運営まわりの処理: タスクの作成・失効、簡易版日報、滞留通知（GitHub Issue）
 import type { Env } from '../env';
-import type { SeasonRow } from '../db/repo';
+import { seasonOverlap, type SeasonRow } from '../db/repo';
 import { newId } from '../lib/crypto';
 import { addDays, jstIso, nextBusinessDay } from '../lib/time';
 import { auditStatement, COMMENTARY_EXPIRES_MS, createTaskStatement, REPORT_DAILY_EXPIRES_MS, TASK_DUE_MS, type TaskType } from './core';
@@ -46,7 +46,7 @@ interface CommentaryPayload {
   timing: Timing;
   fills: { agent_id: string; display_name: string; side: string; ticker: string; name: string | null; quantity: number; price: number }[];
   expired: { agent_id: string; display_name: string; side: string; ticker: string; reason: string | null }[];
-  standings: { rank: number; previous_rank: number | null; agent_id: string; display_name: string; month_return_pct: number; total_return_pct: number }[];
+  standings: { rank: number; previous_rank: number | null; agent_id: string; display_name: string; month_return_pct: number; total_return_pct: number; overlap_pct: number | null }[];
   /** その日の作戦（宣言したAIのみ）。chosen_by: owner = オーナーが選んだ、ai = AIが決めた */
   tactics?: { agent_id: string; display_name: string; tactic: string; chosen_by: string }[];
 }
@@ -88,7 +88,10 @@ export async function commentaryTask(db: D1Database, tradeDate: string, timing: 
         .bind(tradeDate)
         .all<{ rank: number; agent_id: string; display_name: string; total: number; start_total: number; previous_rank: number | null }>()
     ).results;
+    const season = await db.prepare("SELECT id FROM seasons WHERE realm = 'live' AND starts_on <= ? AND ends_on >= ? ORDER BY starts_on DESC LIMIT 1").bind(tradeDate, tradeDate).first<{ id: string }>();
+    const overlap = season ? await seasonOverlap(db, season.id, tradeDate) : new Map<string, number | null>();
     standings = rows.map((r) => ({
+      overlap_pct: overlap.get(r.agent_id) ?? null,
       rank: r.rank,
       previous_rank: r.previous_rank || null,
       agent_id: r.agent_id,

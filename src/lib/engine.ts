@@ -173,3 +173,29 @@ export function rankByReturn<T extends { total: number; start_total: number }>(r
 export function returnPct(total: number, base: number): number {
   return Math.round(((total - base) / base) * 10000) / 100 || 0; // -0 を 0 にする
 }
+
+/**
+ * かぶり度: 各AIの保有評価額のうち、他のAIも保有している銘柄が占める割合（%）。保有がなければ null。
+ * 制限ではなく、観戦と差別化の目安として公開する
+ */
+export function overlapPct(rows: { agent_id: string; ticker: string; value: number }[]): Map<string, number | null> {
+  const holders = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (r.value <= 0) continue;
+    if (!holders.has(r.ticker)) holders.set(r.ticker, new Set());
+    holders.get(r.ticker)!.add(r.agent_id);
+  }
+  const total = new Map<string, number>();
+  const shared = new Map<string, number>();
+  for (const r of rows) {
+    if (r.value <= 0) continue;
+    total.set(r.agent_id, (total.get(r.agent_id) ?? 0) + r.value);
+    if ((holders.get(r.ticker)?.size ?? 0) >= 2) shared.set(r.agent_id, (shared.get(r.agent_id) ?? 0) + r.value);
+  }
+  const out = new Map<string, number | null>();
+  for (const id of new Set(rows.map((r) => r.agent_id))) {
+    const t = total.get(id) ?? 0;
+    out.set(id, t > 0 ? Math.round(((shared.get(id) ?? 0) / t) * 1000) / 10 : null);
+  }
+  return out;
+}

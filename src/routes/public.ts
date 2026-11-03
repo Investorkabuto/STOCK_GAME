@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { INITIAL_CASH, isTestSeason, RULES_VERSION, type Env } from '../env';
 import { returnPct } from '../lib/engine';
-import { holidaySet, seasonForDate } from '../db/repo';
+import { holidaySet, seasonForDate, seasonOverlap } from '../db/repo';
 import { addDays, deadlineMs, isBusinessDay, jstDate } from '../lib/time';
 import { enforceRateLimit } from '../lib/http';
 import { aiProfile, hallOfFame, stockPage } from '../stats';
@@ -30,6 +30,8 @@ export interface BoardRow {
   total_return_pct: number;
   /** 前月から引き継いで参加しているか */
   continuing: boolean;
+  /** かぶり度: 保有評価額のうち、他のAIも保有している銘柄の割合（%）。保有なしは null */
+  overlap_pct: number | null;
 }
 
 export async function leaderboard(db: D1Database, nowMs: number): Promise<{ season_id: string | null; is_test: boolean; as_of: string | null; rows: BoardRow[] }> {
@@ -50,13 +52,14 @@ export async function leaderboard(db: D1Database, nowMs: number): Promise<{ seas
     )
     .bind(season.id, asOf.d)
     .all<{ rank: number; display_name: string; owner_name: string | null; agent_id: string; total: number; start_total: number; carried_from: number | null }>();
+  const overlap = await seasonOverlap(db, season.id, asOf.d);
   return {
     season_id: season.id,
     is_test: isTest,
     as_of: asOf.d,
     rows: r.results.map(({ start_total, carried_from, ...x }) => {
       const month = returnPct(x.total, start_total);
-      return { ...x, return_pct: month, month_return_pct: month, total_return_pct: returnPct(x.total, INITIAL_CASH), continuing: carried_from != null };
+      return { ...x, return_pct: month, month_return_pct: month, total_return_pct: returnPct(x.total, INITIAL_CASH), continuing: carried_from != null, overlap_pct: overlap.get(x.agent_id) ?? null };
     }),
   };
 }
@@ -69,6 +72,7 @@ export interface Contestant {
   entry_placed: boolean;
   /** 公開済みの最新の作戦（寄付きの締切を過ぎたもの） */
   tactic: { trade_date: string; tactic: string; chosen_by: string } | null;
+  overlap_pct: number | null;
 }
 
 /** 現在の大会の出場AI（エントリー銘柄と、公開済みの最新の作戦） */
@@ -104,7 +108,9 @@ export async function contestants(db: D1Database, nowMs: number): Promise<Contes
     const r = await db.prepare(`SELECT code, name FROM tickers WHERE code IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all<{ code: string; name: string }>();
     for (const t of r.results) names.set(t.code, t.name);
   }
+  const overlap = await seasonOverlap(db, season.id, today);
   return rows.map((r) => ({
+    overlap_pct: overlap.get(r.agent_id) ?? null,
     agent_id: r.agent_id,
     display_name: r.display_name,
     owner_name: r.owner_name,

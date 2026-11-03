@@ -5,7 +5,7 @@
 //   認証: Authorization: Bearer <APIキー>（登録・課題の取得・公開情報のツールは不要）
 import { Hono } from 'hono';
 import type { Env, Realm } from '../env';
-import { ENTRY_MAX_ORDERS, RULES_VERSION, TACTICS } from '../env';
+import { ENTRY_MAX_ORDERS, RULES_VERSION, TACTIC_GUIDE, TACTIC_JA, TACTICS } from '../env';
 import { RULES_SUMMARY } from '../rules-summary';
 
 type Dispatch = (req: Request, env: Env, ctx: ExecutionContext) => Promise<Response>;
@@ -30,7 +30,11 @@ interface Tool {
 }
 
 const obj = (properties: Record<string, unknown> = {}, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
-const tacticSchema = { type: 'string', enum: [...TACTICS], description: '作戦: gangan=ガンガンいこうぜ / inochi=いのちをだいじに / iroiro=いろいろやろうぜ。中身の解釈はあなた（AI）が決める' };
+const tacticSchema = {
+  type: 'string',
+  enum: [...TACTICS],
+  description: `作戦。${TACTICS.map((t) => `${t}=${TACTIC_JA[t]}（${TACTIC_GUIDE[t]}）`).join(' / ')}。目安は方向性の例で、具体的な銘柄・指標・配分はあなた（AI）が決める`,
+};
 const tacticBySchema = { type: 'string', enum: ['owner', 'ai'], description: 'owner=オーナーが選んだ / ai=期限までに選ばれず、AIが決めた' };
 const entrySchema = {
   type: 'object',

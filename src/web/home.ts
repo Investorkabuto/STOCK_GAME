@@ -2,7 +2,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { renderMarkdown } from '../lib/markdown';
-import { isTestSeason, TACTIC_JA, type Tactic } from '../env';
+import { isTestSeason, TACTIC_GUIDE, TACTIC_JA, TACTICS, type Tactic } from '../env';
 import type { Contestant } from '../routes/public';
 import type { ReportRow } from '../routes/public';
 import type { aiProfile, hallOfFame, stockPage } from '../stats';
@@ -173,7 +173,7 @@ ${board.is_test
       : board.rows.map(
           (r) => html`<div class="row"><span class="rk">${String(r.rank).padStart(2, '0')}</span>
         <span class="nm"><a href="/ai/${r.agent_id}">${r.display_name}</a><span class="ow">参加者 ${r.owner_name ?? '—'}</span>${playerOf.get(r.agent_id)?.tactic ? html`<span class="ow">${tacticChip(playerOf.get(r.agent_id)!.tactic!.tactic, playerOf.get(r.agent_id)!.tactic!.chosen_by)}</span>` : ''}</span>
-        <span class="rt"><span class="${tone(r.month_return_pct)}">${signed(r.month_return_pct)}</span><span class="tt num">${yen(r.total)}円${r.continuing ? html` · 通算 <span class="${tone(r.total_return_pct)}">${signed(r.total_return_pct)}</span>` : ''}</span></span></div>`,
+        <span class="rt"><span class="${tone(r.month_return_pct)}">${signed(r.month_return_pct)}</span><span class="tt num">${r.overlap_pct != null ? `かぶり ${r.overlap_pct}% · ` : ''}${yen(r.total)}円${r.continuing ? html` · 通算 <span class="${tone(r.total_return_pct)}">${signed(r.total_return_pct)}</span>` : ''}</span></span></div>`,
         )}
   </section>
   <section class="mc" aria-label="運営AIの実況">
@@ -190,6 +190,8 @@ ${notices.length === 0
     ${notices.map((n) => html`<div class="notice"><strong>${n.title}</strong><br>${n.body_markdown}<br><span class="muted">${n.published_at.slice(0, 10)}</span></div>`)}`}
 
 <h2>出場AI</h2>
+<p class="muted">作戦の目安: ${TACTICS.map((t) => html`${tacticChip(t, 'owner')} ${TACTIC_GUIDE[t]}　`)}</p>
+<p class="muted">かぶり度: 保有評価額のうち、ほかのAIも持っている銘柄の割合。低いほど独自の選び方です。作戦をどう解釈するかは各AIが決めます。</p>
 ${players.length === 0
   ? html`<p class="muted">まだ出場しているAIはいません。</p>`
   : html`<div class="players">${players.map(
@@ -197,6 +199,7 @@ ${players.length === 0
       <div class="meta">${p.entry.length
         ? html`<span class="tag entry">${p.entry_placed ? 'エントリー中' : 'エントリー待ち'}</span> ${p.entry.map((e) => html`<a href="/stocks/${e.ticker}">${e.ticker}${e.name ? ` ${e.name}` : ''}</a> `)}`
         : html`<span class="muted">エントリー銘柄は未登録</span>`}</div>
+      <div class="meta">かぶり度: ${p.overlap_pct == null ? html`<span class="muted">保有なし</span>` : `${p.overlap_pct}%`}</div>
       <div class="meta">作戦: ${p.tactic ? html`${tacticChip(p.tactic.tactic, p.tactic.chosen_by)} <span class="muted">${p.tactic.trade_date}</span>` : html`<span class="muted">まだ公開されていません</span>`}</div></div>`,
     )}</div>`}
 
@@ -238,6 +241,9 @@ ${current && current.total != null
 
 <h2>エントリー銘柄</h2>
 ${p.entry.length === 0 ? html`<p class="muted">登録されていません。</p>` : html`<p>${p.entry.map((e) => html`<a class="tag entry" href="/stocks/${e.ticker}">${e.ticker}${e.name ? ` ${e.name}` : ''}</a> `)}</p>`}
+
+<h2>かぶり度</h2>
+<p>${p.overlap_pct == null ? html`<span class="muted">保有がありません。</span>` : html`<strong>${p.overlap_pct}%</strong> <span class="muted">保有評価額のうち、ほかのAIも持っている銘柄の割合。低いほど独自の選び方をしています</span>`}</p>
 
 <h2>作戦の記録</h2>
 ${p.tactics.length === 0 ? html`<p class="muted">公開された作戦はまだありません。</p>` : html`<p>${p.tactics.map((t) => html`<span class="muted">${t.trade_date}</span> ${tacticChip(t.tactic, t.chosen_by)}　`)}</p>`}

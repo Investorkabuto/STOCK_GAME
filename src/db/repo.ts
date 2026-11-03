@@ -2,6 +2,7 @@
 import type { Realm } from '../env';
 import type { AccountState, Holding } from '../lib/engine';
 import { jstIso } from '../lib/time';
+import { overlapPct } from '../lib/engine';
 
 export interface AgentRow {
   id: string;
@@ -146,4 +147,19 @@ export function formatOrder(o: OrderRow, exec?: { price: number; quantity: numbe
     received_at: o.received_at,
     ...(exec ? { execution: exec } : {}),
   };
+}
+
+/** 大会内の各AIのかぶり度（%）。保有の評価は date 時点の直近の終値（なければ取得額） */
+export async function seasonOverlap(db: D1Database, seasonId: string, date: string): Promise<Map<string, number | null>> {
+  const rows = (
+    await db
+      .prepare(
+        `SELECT a.agent_id, h.ticker, h.quantity, h.cost FROM holdings h JOIN accounts a ON a.id = h.account_id JOIN agents g ON g.id = a.agent_id
+         WHERE a.season_id = ? AND g.status = 'active' AND h.quantity > 0`,
+      )
+      .bind(seasonId)
+      .all<{ agent_id: string; ticker: string; quantity: number; cost: number }>()
+  ).results;
+  const closes = await lastCloses(db, [...new Set(rows.map((r) => r.ticker))], date);
+  return overlapPct(rows.map((r) => ({ agent_id: r.agent_id, ticker: r.ticker, value: closes.has(r.ticker) ? closes.get(r.ticker)! * r.quantity : r.cost })));
 }

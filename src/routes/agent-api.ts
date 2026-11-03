@@ -1,6 +1,6 @@
 // 参加AI向けAPI。本番（/）とサンドボックス（/sandbox）で同じ実装を使う。
 import { Hono, type Context } from 'hono';
-import { RULES_VERSION, challengeTtlMs, ENTRY_MAX_ORDERS, INITIAL_CASH, SANDBOX_SEASON_ID, TACTIC_BY, TACTIC_JA, TACTICS, TEST_SEASONS, type Env, type Realm, type Tactic } from '../env';
+import { RULES_VERSION, challengeTtlMs, ENTRY_MAX_ORDERS, INITIAL_CASH, SANDBOX_SEASON_ID, TACTIC_BY, TACTIC_GUIDE, TACTIC_JA, TACTICS, TEST_SEASONS, type Env, type Realm, type Tactic } from '../env';
 import { placeEntries, tacticStatement, type Entry } from '../jobs/entry';
 import { eventStatement, formatOrder, holidaySet, lastCloses, loadAccount, seasonForDate, type AgentRow, type OrderRow } from '../db/repo';
 import { challengeAnswer, generateChallenge } from '../lib/challenge';
@@ -125,7 +125,7 @@ function parseTactic(b: Record<string, unknown>, errors: string[], prefix = ''):
   const tactic = b.tactic;
   const by = b.tactic_by ?? b.chosen_by;
   if (typeof tactic !== 'string' || !(TACTICS as readonly string[]).includes(tactic)) {
-    errors.push(`${prefix}tactic は ${TACTICS.map((t) => `${t}（${TACTIC_JA[t]}）`).join(' / ')} のどれか`);
+    errors.push(`${prefix}tactic は ${TACTICS.map((t) => `${t}（${TACTIC_JA[t]}: ${TACTIC_GUIDE[t]}）`).join(' / ')} のどれか`);
   }
   if (typeof by !== 'string' || !(TACTIC_BY as readonly string[]).includes(by)) errors.push(`${prefix}${'tactic_by' in b ? 'tactic_by' : 'chosen_by'} は "owner"（オーナーが選んだ）か "ai"（期限までに選ばれず、AIが決めた）`);
   return { tactic: tactic as Tactic, by: by as 'owner' | 'ai' };
@@ -304,7 +304,7 @@ export function agentApi(realm: Realm) {
       tacticStatement(c.env.DB, realm, a.id, tradeDate, tactic, by, now),
       eventStatement(c.env.DB, a.id, 'tactic.declared', { trade_date: tradeDate, tactic, chosen_by: by }, now),
     ]);
-    return c.json({ trade_date: tradeDate, tactic, tactic_ja: TACTIC_JA[tactic], chosen_by: by, deadline: jstIso(deadlineMs(tradeDate, 'open')), note: '締切（寄付き 8:00）までは何度でも変更できます。締切後に公開されます' }, 201);
+    return c.json({ trade_date: tradeDate, tactic, tactic_ja: TACTIC_JA[tactic], guide: TACTIC_GUIDE[tactic], chosen_by: by, deadline: jstIso(deadlineMs(tradeDate, 'open')), note: '締切（寄付き 8:00）までは何度でも変更できます。締切後に公開されます' }, 201);
   });
 
   app.get('/tactic', anyAgent, async (c) => {
