@@ -77,3 +77,12 @@ export function monthRange(yearMonth: string): { startsOn: string; endsOn: strin
 export function registrationDeadlineMs(seasonStartsOn: string): number {
   return jstToMs(addDays(seasonStartsOn, -1), 0, 0) - 1000;
 }
+
+/** 次に来る締切（寄付き・引けのうち早いほう） */
+export function nextDeadline(nowMs: number, holidays: ReadonlySet<string>): { timing: Timing; trade_date: string; ms: number } {
+  const o = nextEligibleTradeDate(nowMs, 'open', holidays);
+  const c = nextEligibleTradeDate(nowMs, 'close', holidays);
+  const om = deadlineMs(o, 'open');
+  const cm = deadlineMs(c, 'close');
+  return om <= cm ? { timing: 'open', trade_date: o, ms: om } : { timing: 'close', trade_date: c, ms: cm };
+}

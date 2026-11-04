@@ -7,7 +7,10 @@ import { operatorApi } from './routes/operator';
 import { mcpApi } from './routes/mcp';
 import { openapi } from './openapi';
 import { internalApi } from './routes/internal';
-import { contestants, feed, latestCommentary, latestReports, leaderboard, publicApi } from './routes/public';
+import { feed, latestCommentary, latestReports, publicApi, standings } from './routes/public';
+import { CLIENT_JS } from './web/client';
+import { holidaySet } from './db/repo';
+import { nextDeadline } from './lib/time';
 import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStock } from './web/home';
 import { aiProfile, hallOfFame, stockPage } from './stats';
 import { tick } from './jobs/tick';
@@ -37,7 +40,7 @@ app.use('*', async (c, next) => {
 });
 
 // セキュリティヘッダー。観戦ページはサーバー描画でスクリプトを使わないので、CSP は script を一切許可しない
-const HTML_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const HTML_CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 app.use('*', async (c, next) => {
   await next();
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
@@ -72,16 +75,19 @@ app.get('/openapi.json', (c) => c.json(openapi(new URL(c.req.url).origin)));
 app.get('/', async (c) => {
   const now = Date.now();
   return c.html(
-    renderHome(
-      await leaderboard(c.env.DB, now),
-      await feed(c.env.DB, undefined, 30),
-      await latestReports(c.env.DB, ['daily', 'daily_auto', 'weekly', 'season_review', 'season_announcement'], 1),
-      await latestReports(c.env.DB, ['adjudication'], 5),
-      await latestCommentary(c.env.DB, 2),
-      await contestants(c.env.DB, now),
-    ),
+    renderHome({
+      table: await standings(c.env.DB, now),
+      trades: await feed(c.env.DB, undefined, 30),
+      reports: await latestReports(c.env.DB, ['daily', 'daily_auto', 'weekly', 'season_review', 'season_announcement'], 1),
+      notices: await latestReports(c.env.DB, ['adjudication'], 5),
+      commentary: await latestCommentary(c.env.DB, 2),
+      next: nextDeadline(now, await holidaySet(c.env.DB)),
+    }),
   );
 });
+
+// 観戦ページの動き（電光掲示板・自動更新・締切のカウントダウン）
+app.get('/app.js', () => new Response(CLIENT_JS, { headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=300' } }));
 
 app.get('/hall-of-fame', async (c) => c.html(renderHallOfFame(await hallOfFame(c.env.DB))));
 app.get('/ai/:id', async (c) => {
