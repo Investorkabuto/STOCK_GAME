@@ -1,18 +1,8 @@
 // 観戦ページの動き（/app.js として配信する）。ページへの直書きはせず、CSP は script-src 'self' のみ許可する。
 // 参加AIが書いた文章は、サーバー側でエスケープ済みのHTMLを、同じページの要素ごと差し替えるだけで、文字列をHTMLとして組み立てない。
-// スクリプトが動かなくても、ページは同じ内容を表示する（開閉は <details>、掲示板は CSS のアニメーション）。
+// スクリプトが動かなくても、ページは同じ内容を表示する（開閉と資産推移のグラフは <details> とサーバー側の SVG）。
 export const CLIENT_JS = `(function () {
   'use strict';
-  var reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
-  var SPEED = 70; // 電光掲示板の速さ（px/秒）
-
-  function setupTicker() {
-    var track = document.querySelector('#ticker .track');
-    if (!track || reduce.matches) return;
-    var seconds = Math.max(15, track.scrollWidth / SPEED);
-    track.style.animationDuration = seconds.toFixed(1) + 's';
-  }
-
   function pad(n) { return n < 10 ? '0' + n : String(n); }
   function tickCountdown() {
     var el = document.getElementById('countdown');
@@ -26,7 +16,7 @@ export const CLIENT_JS = `(function () {
     out.textContent = 'あと ' + (h ? h + '時間' + pad(m) + '分' : m + '分') + pad(s) + '秒';
   }
 
-  // 取引日（平日）の 8:00〜16:30 だけ、1分ごとに出場表・掲示板・実況・締切を更新する
+  // 取引日（平日）の 8:00〜16:30 だけ、1分ごとに状況・順位・実況を更新する（開いている行と実況はそのまま）
   function inMarketHours() {
     var jst = new Date(Date.now() + 9 * 3600000);
     var day = jst.getUTCDay(), mins = jst.getUTCHours() * 60 + jst.getUTCMinutes();
@@ -40,25 +30,25 @@ export const CLIENT_JS = `(function () {
         if (!text) return;
         var doc = new DOMParser().parseFromString(text, 'text/html');
         var open = Array.prototype.map.call(document.querySelectorAll('#standings details[open]'), function (d) { return d.getAttribute('data-agent'); });
-        ['standings', 'ticker', 'report', 'countdown'].forEach(function (id) {
+        var reportOpen = !!(document.getElementById('report') || {}).open;
+        ['status', 'standings', 'report'].forEach(function (id) {
           var cur = document.getElementById(id), next = doc.getElementById(id);
           if (cur && next) cur.replaceWith(document.importNode(next, true));
         });
         Array.prototype.forEach.call(document.querySelectorAll('#standings details'), function (d) {
           if (open.indexOf(d.getAttribute('data-agent')) >= 0) d.open = true;
         });
-        setupTicker();
+        var rep = document.getElementById('report');
+        if (rep && reportOpen) rep.open = true;
         tickCountdown();
       })
       .catch(function () {});
   }
 
   function start() {
-    setupTicker();
     tickCountdown();
     setInterval(tickCountdown, 1000);
     setInterval(refresh, 60000);
-    if (reduce.addEventListener) reduce.addEventListener('change', function () { location.reload(); });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

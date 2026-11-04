@@ -1,8 +1,8 @@
 // 誰でも見られる情報（観戦者・参加AI共通）
 import { Hono } from 'hono';
 import { INITIAL_CASH, isTestSeason, RULES_VERSION, type Env } from '../env';
-import { returnPct } from '../lib/engine';
-import { entryView, holidaySet, seasonForDate, seasonOverlap, type EntryView } from '../db/repo';
+import { rankByReturn, returnPct, tradeAmount } from '../lib/engine';
+import { entryView, holidaySet, lastCloses, seasonForDate, seasonOverlap, type EntryView } from '../db/repo';
 import { addDays, deadlineMs, isBusinessDay, jstDate } from '../lib/time';
 import { enforceRateLimit } from '../lib/http';
 import { aiProfile, hallOfFame, stockPage } from '../stats';
@@ -141,6 +141,9 @@ export interface StandingRow {
   tactic: { trade_date: string; tactic: string; chosen_by: string } | null;
   as_of: string | null;
   total: number | null;
+  /** 直近に精算した時点の現金と、株の評価額 */
+  cash: number | null;
+  market_value: number | null;
   /** 直近に精算した取引日の前日比（その月の最初の取引日は月初比） */
   daily_change: number | null;
   daily_change_pct: number | null;
@@ -152,36 +155,76 @@ export interface StandingRow {
   holdings: { ticker: string; name: string | null; quantity: number }[];
   /** そのAIの直近の取引日の、公開済みの売買 */
   recent: { trade_date: string | null; trades: StandingTrade[] };
+  /** 月初の総資産（月間リターンの基準） */
+  month_start_total: number;
+  /** 資産推移: 月初（month_start_total）と、精算した各取引日の引け時点の総資産（古い順） */
+  history: { trade_date: string; total: number }[];
+  /** 場中の暫定評価（現在の現金 + 保有株 × 場中の株価）。精算前の観戦用で、正式な順位は引け後の精算で決まる。場中の株価がなければ null */
+  live: LiveValuation | null;
+}
+
+export interface LiveValuation {
+  total: number;
+  cash: number;
+  market_value: number;
+  /** 暫定順位（参加中のAIだけ） */
+  rank: number | null;
+  /** 直近の精算（前の取引日の引け）からの増減 */
+  daily_change: number;
+  daily_change_pct: number;
+  month_return_pct: number;
+  total_return_pct: number;
+}
+
+export interface StandingsResult {
+  season_id: string | null;
+  is_test: boolean;
+  as_of: string | null;
+  /** 場中の暫定評価に使った株価の時刻（最新のもの）。暫定評価がなければ null */
+  live: { quoted_at: string } | null;
+  rows: StandingRow[];
+}
+
+/** 口座の評価額。価格がない銘柄は取得原価で評価する（精算と同じ考え方） */
+export function valuate(cash: number, holdings: { ticker: string; quantity: number; cost: number }[], price: (ticker: string) => number | undefined) {
+  let mv = 0;
+  for (const h of holdings) {
+    const p = price(h.ticker);
+    mv += p === undefined ? h.cost : tradeAmount(p, h.quantity);
+  }
+  return { cash, market_value: mv, total: cash + mv };
 }
 
 /** 出場表: 現在の大会に関わる本番のAI全員（却下を除く）。順位順、順位がないAIは登録順 */
-export async function standings(db: D1Database, nowMs: number): Promise<{ season_id: string | null; is_test: boolean; as_of: string | null; rows: StandingRow[] }> {
+export async function standings(db: D1Database, nowMs: number): Promise<StandingsResult> {
   const season = await seasonForDate(db, 'live', jstDate(nowMs));
-  if (!season) return { season_id: null, is_test: false, as_of: null, rows: [] };
+  if (!season) return { season_id: null, is_test: false, as_of: null, live: null, rows: [] };
   const today = jstDate(nowMs);
   const agents = (
     await db
       .prepare(
-        `SELECT g.id AS agent_id, g.display_name, g.owner_name, g.status, g.created_at, a.id AS account_id,
+        `SELECT g.id AS agent_id, g.display_name, g.owner_name, g.status, g.created_at, a.id AS account_id, a.cash,
                 COALESCE(a.start_total, ${INITIAL_CASH}) AS start_total, a.carried_from
          FROM agents g LEFT JOIN accounts a ON a.agent_id = g.id AND a.season_id = ?
          WHERE g.realm = 'live' AND (a.id IS NOT NULL OR g.status = 'pending') AND g.status != 'rejected'
          ORDER BY g.created_at`,
       )
       .bind(season.id)
-      .all<{ agent_id: string; display_name: string; owner_name: string | null; status: string; created_at: string; account_id: number | null; start_total: number; carried_from: number | null }>()
+      .all<{ agent_id: string; display_name: string; owner_name: string | null; status: string; created_at: string; account_id: number | null; cash: number | null; start_total: number; carried_from: number | null }>()
   ).results;
-  const snaps = new Map<number, { trade_date: string; total: number; rank: number }[]>();
+  // 精算ごとの記録（新しい順）。資産推移のグラフにも使う
+  type Snap = { trade_date: string; cash: number; market_value: number; total: number; rank: number };
+  const snaps = new Map<number, Snap[]>();
   const snapRows = (
     await db
-      .prepare('SELECT d.account_id, d.trade_date, d.total, d.rank FROM daily_snapshots d JOIN accounts a ON a.id = d.account_id WHERE a.season_id = ? ORDER BY d.trade_date DESC')
+      .prepare('SELECT d.account_id, d.trade_date, d.cash, d.market_value, d.total, d.rank FROM daily_snapshots d JOIN accounts a ON a.id = d.account_id WHERE a.season_id = ? ORDER BY d.trade_date DESC')
       .bind(season.id)
-      .all<{ account_id: number; trade_date: string; total: number; rank: number }>()
+      .all<Snap & { account_id: number }>()
   ).results;
-  for (const r of snapRows) {
-    const list = snaps.get(r.account_id) ?? [];
-    if (list.length < 2) list.push(r);
-    snaps.set(r.account_id, list);
+  for (const { account_id, ...r } of snapRows) {
+    const list = snaps.get(account_id) ?? [];
+    list.push(r);
+    snaps.set(account_id, list);
   }
   const asOf = snapRows[0]?.trade_date ?? null;
   const overlap = await seasonOverlap(db, season.id, today);
@@ -212,10 +255,50 @@ export async function standings(db: D1Database, nowMs: number): Promise<{ season
   ).results;
   const holdings = (
     await db
-      .prepare('SELECT a.agent_id, h.ticker, t.name, h.quantity FROM holdings h JOIN accounts a ON a.id = h.account_id LEFT JOIN tickers t ON t.code = h.ticker WHERE a.season_id = ? AND h.quantity > 0 ORDER BY h.ticker')
+      .prepare('SELECT a.agent_id, h.ticker, t.name, h.quantity, h.cost FROM holdings h JOIN accounts a ON a.id = h.account_id LEFT JOIN tickers t ON t.code = h.ticker WHERE a.season_id = ? AND h.quantity > 0 ORDER BY h.ticker')
       .bind(season.id)
-      .all<{ agent_id: string; ticker: string; name: string | null; quantity: number }>()
+      .all<{ agent_id: string; ticker: string; name: string | null; quantity: number; cost: number }>()
   ).results;
+
+  // 場中の暫定評価: 今日の精算がまだで、今日の場中の株価があるとき。株価がない銘柄は直近の終値、それもなければ取得原価で評価する
+  const heldTickers = [...new Set(holdings.map((h) => h.ticker))];
+  const quotes = new Map<string, { price: number; quoted_at: string }>();
+  if (asOf !== today && heldTickers.length) {
+    for (let i = 0; i < heldTickers.length; i += 50) {
+      const chunk = heldTickers.slice(i, i + 50);
+      const r = await db
+        .prepare(`SELECT ticker, price, quoted_at FROM live_quotes WHERE trade_date = ? AND ticker IN (${chunk.map(() => '?').join(',')})`)
+        .bind(today, ...chunk)
+        .all<{ ticker: string; price: number; quoted_at: string }>()
+        .catch(() => ({ results: [] as { ticker: string; price: number; quoted_at: string }[] }));
+      for (const q of r.results) quotes.set(q.ticker, { price: q.price, quoted_at: q.quoted_at });
+    }
+  }
+  const quotedAt = quotes.size ? [...quotes.values()].reduce((m, q) => (q.quoted_at > m ? q.quoted_at : m), '') : null;
+  const liveById = new Map<string, LiveValuation>();
+  if (quotedAt) {
+    const closes = await lastCloses(db, heldTickers, today);
+    const price = (t: string) => quotes.get(t)?.price ?? closes.get(t);
+    const vals = agents
+      .filter((a) => a.account_id != null && a.cash != null)
+      .map((a) => {
+        const v = valuate(a.cash!, holdings.filter((h) => h.agent_id === a.agent_id), price);
+        return { agent_id: a.agent_id, status: a.status, start_total: a.start_total, prev: snaps.get(a.account_id!)?.[0]?.total ?? a.start_total, ...v };
+      });
+    const ranks = new Map(rankByReturn(vals.filter((v) => v.status === 'active')).map((v) => [v.agent_id, v.rank]));
+    for (const v of vals) {
+      liveById.set(v.agent_id, {
+        total: v.total,
+        cash: v.cash,
+        market_value: v.market_value,
+        rank: ranks.get(v.agent_id) ?? null,
+        daily_change: v.total - v.prev,
+        daily_change_pct: returnPct(v.total, v.prev),
+        month_return_pct: returnPct(v.total, v.start_total),
+        total_return_pct: returnPct(v.total, INITIAL_CASH),
+      });
+    }
+  }
 
   const rows: StandingRow[] = [];
   for (const a of agents) {
@@ -235,6 +318,8 @@ export async function standings(db: D1Database, nowMs: number): Promise<{ season
       tactic: tactics.get(a.agent_id) ?? null,
       as_of: latest?.trade_date ?? null,
       total: latest?.total ?? null,
+      cash: latest?.cash ?? null,
+      market_value: latest?.market_value ?? null,
       daily_change: latest ? latest.total - prevTotal : null,
       daily_change_pct: latest ? returnPct(latest.total, prevTotal) : null,
       month_return_pct: latest ? returnPct(latest.total, a.start_total) : null,
@@ -242,13 +327,17 @@ export async function standings(db: D1Database, nowMs: number): Promise<{ season
       continuing: a.carried_from != null,
       overlap_pct: overlap.get(a.agent_id) ?? null,
       entry,
-      holdings: holdings.filter((h) => h.agent_id === a.agent_id).map(({ agent_id: _a, ...h }) => h),
+      holdings: holdings.filter((h) => h.agent_id === a.agent_id).map(({ agent_id: _a, cost: _c, ...h }) => h),
       recent: { trade_date: mine[0]?.trade_date ?? null, trades: mine },
+      month_start_total: a.start_total,
+      history: [...list].reverse().map((s) => ({ trade_date: s.trade_date, total: s.total })),
+      live: liveById.get(a.agent_id) ?? null,
     });
   }
-  // 順位順。順位がないAIは下にまとめ、登録順（agents は登録順に並んでいる）
-  rows.sort((x, y) => (x.rank ?? Number.MAX_SAFE_INTEGER) - (y.rank ?? Number.MAX_SAFE_INTEGER));
-  return { season_id: season.id, is_test: isTestSeason(season.id), as_of: asOf, rows };
+  // 順位順（暫定評価があれば暫定順位）。順位がないAIは下にまとめ、登録順（agents は登録順に並んでいる）
+  const order = (r: StandingRow) => (quotedAt ? r.live?.rank : r.rank) ?? Number.MAX_SAFE_INTEGER;
+  rows.sort((x, y) => order(x) - order(y));
+  return { season_id: season.id, is_test: isTestSeason(season.id), as_of: asOf, live: quotedAt ? { quoted_at: quotedAt } : null, rows };
 }
 
 publicApi.get('/standings', async (c) => c.json(await standings(c.env.DB, Date.now())));

@@ -78,6 +78,39 @@ internalApi.get('/held-tickers', async (c) => {
   return c.json({ tickers: r.results.map((x) => x.ticker) });
 });
 
+interface QuoteIn {
+  ticker: string;
+  price: number;
+  /** 株価の時刻（日本時間の ISO 8601。例 2026-11-04T13:20:00+09:00） */
+  quoted_at: string;
+}
+
+const QUOTED_AT = /^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}(:\d{2})?\+09:00$/;
+
+/** 場中の株価（観戦用の暫定評価。精算には使わない）。銘柄ごとに、より新しい値だけで上書きする */
+internalApi.post('/quotes', async (c) => {
+  const b = await readJson(c);
+  const list = b.quotes;
+  if (!Array.isArray(list)) throw new ApiError(400, 'bad_request', 'quotes must be an array');
+  const now = jstIso(Date.now());
+  const stmts: D1PreparedStatement[] = [];
+  for (const q of list as QuoteIn[]) {
+    const m = typeof q.quoted_at === 'string' ? QUOTED_AT.exec(q.quoted_at) : null;
+    if (typeof q.ticker !== 'string' || !/^[0-9A-Z]{4}$/.test(q.ticker) || !m || !(typeof q.price === 'number' && q.price > 0 && Number.isFinite(q.price))) {
+      throw new ApiError(400, 'bad_request', `invalid quote: ${JSON.stringify(q)}`);
+    }
+    stmts.push(
+      c.env.DB.prepare(
+        `INSERT INTO live_quotes (ticker, trade_date, price, quoted_at, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (ticker) DO UPDATE SET trade_date = excluded.trade_date, price = excluded.price, quoted_at = excluded.quoted_at, updated_at = excluded.updated_at
+         WHERE excluded.quoted_at >= live_quotes.quoted_at`,
+      ).bind(q.ticker, m[1], q.price, q.quoted_at, now),
+    );
+  }
+  if (stmts.length) await c.env.DB.batch(stmts);
+  return c.json({ upserted: stmts.length });
+});
+
 interface ActionIn {
   ticker: string;
   ex_date: string;
