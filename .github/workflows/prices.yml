@@ -1,14 +1,16 @@
 name: Fetch prices
 
-# 平日の日本時間 9:30 / 10:30（始値）、15:50 / 16:30（終値）、18:00（最終確定）に実行する。
-# GitHub の cron は UTC。起動は数分遅れることがあるが、締切はAPI側で判定するので公平性に影響しない。
+# 平日の日本時間に実行する（GitHub の cron は UTC）。何度実行しても結果は同じなので、回数が多くても安全。
+#  - 9:05〜15:45 の20分ごと（:05 / :25 / :45）: 精算待ちの始値（・前日以前の終値）の取得と、場中の株価（観戦用の暫定評価）の取得
+#  - 15:50 / 16:35: 終値の取得
+#  - 18:05: 最終確定（データの無い銘柄を「値が付かなかった」として確定）
+# 毎時0分・30分は GitHub の定期実行が遅れたり飛ばされたりしやすいので避ける。起動が遅れても、締切はAPI側で判定するので公平性に影響しない。
 on:
   schedule:
-    - cron: "30 0 * * 1-5"
-    - cron: "30 1 * * 1-5"
+    - cron: "5,25,45 0-6 * * 1-5"
     - cron: "50 6 * * 1-5"
-    - cron: "30 7 * * 1-5"
-    - cron: "0 9 * * 1-5"
+    - cron: "35 7 * * 1-5"
+    - cron: "5 9 * * 1-5"
   workflow_dispatch:
     inputs:
       final:
@@ -43,8 +45,13 @@ jobs:
         run: |
           if [ -n "${{ inputs.probe }}" ]; then
             python scripts/fetch_prices.py --probe "${{ inputs.probe }}"
-          elif [ "${{ github.event.schedule }}" = "0 9 * * 1-5" ] || [ "${{ inputs.final }}" = "true" ]; then
+          elif [ "${{ github.event.schedule }}" = "5 9 * * 1-5" ] || [ "${{ inputs.final }}" = "true" ]; then
             python scripts/fetch_prices.py --final
           else
             python scripts/fetch_prices.py
+            # 場中（9:00〜15:45）は、観戦用の場中の株価も取り込む。失敗しても精算用の取得は止めない
+            hm=$(TZ=Asia/Tokyo date +%H%M)
+            if [ "$hm" -ge 0900 ] && [ "$hm" -le 1545 ]; then
+              python scripts/fetch_prices.py --quotes || echo "::warning::live quotes failed"
+            fi
           fi

@@ -27,6 +27,10 @@ USER_AGENT = "stock-game-ingest/1.0 (+https://github.com/Investorkabuto/STOCK_GA
 JST = dt.timezone(dt.timedelta(hours=9))
 # 終値は大引け（15:30）後しばらくしないと確定しないため、それより前は当日の終値を取りに行かない
 CLOSE_READY = dt.time(15, 45)
+# 寄付きは 9:00。それより前は当日の始値を取りに行かない
+OPEN_READY = dt.time(9, 0)
+# 前場（11:30）が終わっても約定がない銘柄は、寄付きで「値が付かなかった」として確定させる
+OPEN_FINAL = dt.time(11, 35)
 
 
 def api(method: str, path: str, body: dict | None = None) -> dict:
@@ -161,9 +165,15 @@ def main() -> int:
     rows: list[dict] = []
     for req in requests:
         date, field, tickers = req["trade_date"], req["field"], req["tickers"]
-        if field == "close" and date == now.date().isoformat() and now.time() < CLOSE_READY:
+        today = date == now.date().isoformat()
+        if field == "close" and today and now.time() < CLOSE_READY:
             print(f"skip {date} close: before {CLOSE_READY}")
             continue
+        if field == "open" and today and now.time() < OPEN_READY:
+            print(f"skip {date} open: before {OPEN_READY}")
+            continue
+        # 値が付かなかったと確定させてよいか。早い時刻の実行では、まだ約定していない銘柄を確定させず、次の実行で取り直す
+        settle_no_trade = args.final or not today or (field == "open" and now.time() >= OPEN_FINAL)
         bars = daily_bars(tickers, date)
         if not bars and not args.final:
             # 1銘柄も取れない場合は取得の失敗とみなし、何も書き込まない（精算は保留される）
@@ -177,8 +187,12 @@ def main() -> int:
                 continue
             # 出来高0は値が付かなかった（ストップ高・安の張り付きなど）
             value = bar[field]
-            price = round(value, 1) if bar["volume"] > 0 and usable(value) else None
-            rows.append({"ticker": t, "trade_date": date, "field": field, "price": price})
+            if bar["volume"] > 0 and usable(value):
+                rows.append({"ticker": t, "trade_date": date, "field": field, "price": round(value, 1)})
+            elif settle_no_trade:
+                rows.append({"ticker": t, "trade_date": date, "field": field, "price": None})
+            else:
+                print(f"wait {date} {field} {t}: not traded yet")
 
     if rows:
         res = api("POST", "/internal/prices", {"prices": rows})
