@@ -7,6 +7,8 @@ GitHub Actions から定期的に実行する（.github/workflows/prices.yml）�
 
 環境変数: API_BASE_URL, INGEST_TOKEN
 引数 --final: その日の最終実行。データが見つからない銘柄を「値が付かなかった」として確定させる
+引数 --quotes: 場中の株価だけを取り込む（観戦ページの暫定評価用。精算には使わない）。
+  保有されている銘柄の5分足の最新値を POST /internal/quotes に書き込む
 """
 from __future__ import annotations
 
@@ -96,6 +98,39 @@ def sync_corporate_actions() -> None:
         print(f"corporate actions: {res['upserted']}")
 
 
+def sync_quotes() -> int:
+    """保有されている銘柄の、場中の最新値（5分足の終値）を書き込む。Yahoo の値は十数分遅れることがある"""
+    tickers = api("GET", "/internal/held-tickers")["tickers"]
+    if not tickers:
+        print("no held tickers")
+        return 0
+    symbols = [f"{t}.T" for t in tickers]
+    df = yf.download(symbols, period="1d", interval="5m", group_by="ticker",
+                     auto_adjust=False, progress=False, threads=True)
+    quotes: list[dict] = []
+    for t, s in zip(tickers, symbols):
+        try:
+            sub = df[s] if getattr(df.columns, "nlevels", 1) > 1 else df
+            closes = sub["Close"].dropna()
+        except KeyError:
+            continue
+        if closes.empty:
+            continue
+        ts, value = closes.index[-1], float(closes.iloc[-1])
+        if not usable(value):
+            continue
+        at = ts.to_pydatetime()
+        at = (at.replace(tzinfo=dt.timezone.utc) if at.tzinfo is None else at).astimezone(JST)
+        quotes.append({"ticker": t, "price": round(value, 1), "quoted_at": at.replace(microsecond=0).isoformat()})
+    if not quotes:
+        # 取得の失敗とみなす（観戦ページは前回の値のまま）
+        print("WARN quotes: no data for any ticker", file=sys.stderr)
+        return 0
+    res = api("POST", "/internal/quotes", {"quotes": quotes})
+    print(f"upserted {res['upserted']} quotes (latest {max(q['quoted_at'] for q in quotes)})")
+    return 0
+
+
 def usable(v: float) -> bool:
     return v is not None and not math.isnan(v) and v > 0
 
@@ -103,12 +138,15 @@ def usable(v: float) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--final", action="store_true")
+    parser.add_argument("--quotes", action="store_true", help="場中の株価だけを取り込む（観戦用の暫定評価）")
     parser.add_argument("--probe", metavar="TICKER", help="アプリに書き込まず、指定銘柄の直近5営業日の日足を表示する（Yahoo への接続確認用）")
     args = parser.parse_args()
     if args.probe:
         df = yf.download(f"{args.probe}.T", period="5d", interval="1d", auto_adjust=False, progress=False)
         print(df)
         return 0 if not df.empty else 1
+    if args.quotes:
+        return sync_quotes()
     now = dt.datetime.now(JST)
 
     try:

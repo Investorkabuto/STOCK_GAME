@@ -89,6 +89,10 @@ const MIGRATIONS: Migration[] = [
     name: '0008_app_state',
     steps: [{ kind: 'sql', sql: 'CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)' }],
   },
+  {
+    name: '0009_live_quotes',
+    steps: [{ kind: 'sql', sql: 'CREATE TABLE IF NOT EXISTS live_quotes (ticker TEXT PRIMARY KEY, trade_date TEXT NOT NULL, price REAL NOT NULL, quoted_at TEXT NOT NULL, updated_at TEXT NOT NULL)' }],
+  },
 ];
 
 async function hasColumn(db: D1Database, table: string, column: string): Promise<boolean> {

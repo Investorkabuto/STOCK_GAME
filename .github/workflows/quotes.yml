@@ -1,0 +1,31 @@
+name: Fetch live quotes
+
+# 平日の日本時間 9:00〜15:40 に20分ごと、保有されている銘柄の場中の株価を取り込む。
+# 観戦ページの暫定評価（総資産・月間リターン・暫定順位）にだけ使い、精算には使わない。
+# GitHub の cron は UTC（0〜6時 = 日本時間 9〜15時）。祝日は Yahoo が前の取引日の値を返すが、アプリは当日の値しか使わない。
+on:
+  schedule:
+    - cron: "*/20 0-6 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: fetch-quotes
+  cancel-in-progress: true
+
+jobs:
+  quotes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: pip install -r scripts/requirements.txt
+      - name: Fetch and ingest quotes
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: python scripts/fetch_prices.py --quotes

@@ -7,16 +7,16 @@ import { operatorApi } from './routes/operator';
 import { mcpApi } from './routes/mcp';
 import { openapi } from './openapi';
 import { internalApi } from './routes/internal';
-import { feed, latestCommentary, latestReports, publicApi, standings } from './routes/public';
+import { latestCommentary, latestReports, publicApi, standings } from './routes/public';
 import { CLIENT_JS } from './web/client';
-import { holidaySet } from './db/repo';
-import { nextDeadline } from './lib/time';
-import { renderAi, renderHallOfFame, renderHome, renderNotFound, renderStock } from './web/home';
+import { holidaySet, seasonForDate } from './db/repo';
+import { jstDate, nextDeadline } from './lib/time';
+import { renderAbout, renderAi, renderHallOfFame, renderHome, homeFormat, renderHomeMarkdown, renderNotFound, renderStock } from './web/home';
 import { aiProfile, hallOfFame, stockPage } from './stats';
 import { tick } from './jobs/tick';
 import { ensureSchema } from './db/migrate';
 import { RULES_SUMMARY } from './rules-summary';
-import { RULES_VERSION } from './env';
+import { isTestSeason, RULES_VERSION } from './env';
 import llmsTxt from '../agent-docs/llms.txt';
 import rulesMd from '../agent-docs/agents/rules.md';
 import quickstartMd from '../agent-docs/agents/quickstart.md';
@@ -48,7 +48,11 @@ app.use('*', async (c, next) => {
   c.res.headers.set('X-Frame-Options', 'DENY');
   c.res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.res.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if ((c.res.headers.get('Content-Type') ?? '').startsWith('text/html')) c.res.headers.set('Content-Security-Policy', HTML_CSP);
+  if ((c.res.headers.get('Content-Type') ?? '').startsWith('text/html')) {
+    c.res.headers.set('Content-Security-Policy', HTML_CSP);
+    // ページ本文を読まないクライアントにも、AI向けの案内の場所を伝える
+    c.res.headers.set('Link', '</llms.txt>; rel="alternate"; type="text/plain"; title="AI向けの案内"');
+  }
 });
 
 app.onError((err, c) => {
@@ -71,22 +75,32 @@ app.get('/agents/webhook.md', text(webhookMd, 'text/markdown'));
 app.get('/agents/mcp.md', text(mcpMd, 'text/markdown'));
 app.get('/openapi.json', (c) => c.json(openapi(new URL(c.req.url).origin)));
 
-// 観戦者向けトップページ
+// 観戦者向けトップページ（AIには Markdown / JSON）
 app.get('/', async (c) => {
   const now = Date.now();
+  const format = homeFormat(c.req.header('Accept'));
+  c.header('Vary', 'Accept');
+  const table = await standings(c.env.DB, now);
+  const next = nextDeadline(now, await holidaySet(c.env.DB));
+  if (format === 'json') return c.json({ guide: '/llms.txt', ...table, next_deadline: { timing: next.timing, trade_date: next.trade_date } });
+  if (format === 'markdown') return c.body(renderHomeMarkdown(table, next), 200, { 'Content-Type': 'text/markdown; charset=utf-8', Link: '</llms.txt>; rel="alternate"; type="text/plain"' });
   return c.html(
     renderHome({
-      table: await standings(c.env.DB, now),
-      trades: await feed(c.env.DB, undefined, 30),
+      table,
       reports: await latestReports(c.env.DB, ['daily', 'daily_auto', 'weekly', 'season_review', 'season_announcement'], 1),
       notices: await latestReports(c.env.DB, ['adjudication'], 5),
-      commentary: await latestCommentary(c.env.DB, 2),
-      next: nextDeadline(now, await holidaySet(c.env.DB)),
+      commentary: await latestCommentary(c.env.DB, 1),
+      next,
     }),
   );
 });
 
-// 観戦ページの動き（電光掲示板・自動更新・締切のカウントダウン）
+app.get('/about', async (c) => {
+  const season = await seasonForDate(c.env.DB, 'live', jstDate(Date.now()));
+  return c.html(renderAbout(season ? isTestSeason(season.id) : false));
+});
+
+// 観戦ページの動き（自動更新・締切のカウントダウン）
 app.get('/app.js', () => new Response(CLIENT_JS, { headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=300' } }));
 
 app.get('/hall-of-fame', async (c) => c.html(renderHallOfFame(await hallOfFame(c.env.DB))));
