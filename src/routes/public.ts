@@ -282,10 +282,14 @@ export async function standings(db: D1Database, nowMs: number): Promise<Standing
     const vals = agents
       .filter((a) => a.account_id != null && a.cash != null)
       .map((a) => {
-        const v = valuate(a.cash!, holdings.filter((h) => h.agent_id === a.agent_id), price);
-        return { agent_id: a.agent_id, status: a.status, start_total: a.start_total, prev: snaps.get(a.account_id!)?.[0]?.total ?? a.start_total, ...v };
+        const mine = holdings.filter((h) => h.agent_id === a.agent_id);
+        const v = valuate(a.cash!, mine, price);
+        // 場中の株価も過去の終値も付いていない保有があると、その分は取得原価で評価され、実態とずれる。
+        // その場合は暫定順位を付けない（原価評価のまま ±0% で上位に見える事故を防ぐ。連絡33・34）
+        const fullyPriced = mine.every((h) => price(h.ticker) !== undefined);
+        return { agent_id: a.agent_id, status: a.status, start_total: a.start_total, prev: snaps.get(a.account_id!)?.[0]?.total ?? a.start_total, fullyPriced, ...v };
       });
-    const ranks = new Map(rankByReturn(vals.filter((v) => v.status === 'active')).map((v) => [v.agent_id, v.rank]));
+    const ranks = new Map(rankByReturn(vals.filter((v) => v.status === 'active' && v.fullyPriced)).map((v) => [v.agent_id, v.rank]));
     for (const v of vals) {
       liveById.set(v.agent_id, {
         total: v.total,

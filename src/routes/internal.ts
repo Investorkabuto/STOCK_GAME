@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { Env } from '../env';
 import { missingTickers } from '../jobs/settlement';
 import { ApiError, bearer, readJson, safeEqual } from '../lib/http';
-import { jstIso, type Timing } from '../lib/time';
+import { jstDate, jstIso, type Timing } from '../lib/time';
 
 export const internalApi = new Hono<{ Bindings: Env }>();
 
@@ -70,11 +70,22 @@ internalApi.put('/tickers', async (c) => {
   return c.json({ count: list.length });
 });
 
-/** 本番の参加中シーズンで保有されている銘柄（配当・分割の取得対象） */
+/**
+ * 本番の参加中シーズンで保有されている銘柄（配当・分割の取得対象）。
+ * あわせて、その日の精算待ち（locked）の注文の銘柄も返す。holdings は精算で初めて作られるため、
+ * 初参加のAIの銘柄は精算まで場中の株価の取得対象から漏れてしまう（連絡33・34）。locked の注文は
+ * 締切時点で確定しているので、精算前から対象に含めてよい。
+ */
 internalApi.get('/held-tickers', async (c) => {
   const r = await c.env.DB.prepare(
-    "SELECT DISTINCT h.ticker FROM holdings h JOIN accounts a ON a.id = h.account_id JOIN seasons s ON s.id = a.season_id WHERE s.realm = 'live' AND s.status = 'running' ORDER BY h.ticker",
-  ).all<{ ticker: string }>();
+    `SELECT DISTINCT t.ticker FROM (
+       SELECT h.ticker AS ticker FROM holdings h JOIN accounts a ON a.id = h.account_id JOIN seasons s ON s.id = a.season_id WHERE s.realm = 'live' AND s.status = 'running'
+       UNION
+       SELECT o.ticker AS ticker FROM orders o WHERE o.realm = 'live' AND o.status = 'locked' AND o.trade_date = ?
+     ) t ORDER BY t.ticker`,
+  )
+    .bind(jstDate(Date.now()))
+    .all<{ ticker: string }>();
   return c.json({ tickers: r.results.map((x) => x.ticker) });
 });
 
